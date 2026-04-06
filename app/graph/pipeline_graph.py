@@ -6,7 +6,7 @@ Nodes:
   2. understand_prd  — GPT-4o로 PRD 목적/범위/핵심 요구사항 요약
   3. identify_domains — 프로젝트 도메인 영역 식별
   4. generate_items  — 파이프라인 아이템 및 세부 구현사항 생성
-  5. prioritize      — 우선순위 정렬 (HIGH / MEDIUM / LOW)
+  5. prioritize      — 우선순위 정렬 (숫자 오름차순)
 """
 import json
 import tempfile
@@ -18,7 +18,7 @@ from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
 from docling.document_converter import DocumentConverter
 
-from app.models.pipeline import PipelineItem, Priority
+from app.models.pipeline import PipelineItem
 from app.config import get_settings
 
 
@@ -182,8 +182,7 @@ def generate_items(state: PipelineState) -> PipelineState:
             """[
   {
     "title": "파이프라인 아이템 제목",
-    "content": "이 아이템의 목적과 핵심 내용 (2-3문장)",
-    "priority": "HIGH",
+    "priority": 1,
     "details": [
       "세부 구현사항 1",
       "세부 구현사항 2",
@@ -191,7 +190,7 @@ def generate_items(state: PipelineState) -> PipelineState:
     ]
   }
 ]"""
-            "\n\npriority는 반드시 HIGH, MEDIUM, LOW 중 하나여야 합니다. "
+            "\n\npriority는 반드시 숫자로 표기하여 진행 순서를 나타내주세요 (1부터 시작). "
             "세부 구현사항은 각 아이템당 3-5개를 작성하세요."
         )),
     ]
@@ -237,21 +236,19 @@ def prioritize(state: PipelineState) -> PipelineState:
     # Pydantic 모델로 변환 및 검증
     items: List[PipelineItem] = []
     for item in raw_list:
-        # priority 정규화
-        priority_str = str(item.get("priority", "MEDIUM")).upper()
-        if priority_str not in ("HIGH", "MEDIUM", "LOW"):
-            priority_str = "MEDIUM"
+        try:
+            priority_val = int(item.get("priority", 999))
+        except (ValueError, TypeError):
+            priority_val = 999
 
         items.append(PipelineItem(
             title=item.get("title", ""),
-            content=item.get("content", ""),
-            priority=Priority(priority_str),
+            priority=priority_val,
             details=item.get("details", []),
         ))
 
-    # 우선순위 순서로 정렬: HIGH → MEDIUM → LOW
-    priority_order = {Priority.HIGH: 0, Priority.MEDIUM: 1, Priority.LOW: 2}
-    items.sort(key=lambda x: priority_order[x.priority])
+    # 우선순위 오름차순(1, 2, 3...)으로 정렬
+    items.sort(key=lambda x: x.priority)
 
     return {**state, "pipeline": items}
 

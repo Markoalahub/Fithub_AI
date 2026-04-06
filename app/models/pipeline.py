@@ -1,18 +1,10 @@
 from pydantic import BaseModel, Field
-from enum import Enum
 from typing import List
-
-
-class Priority(str, Enum):
-    HIGH = "HIGH"
-    MEDIUM = "MEDIUM"
-    LOW = "LOW"
 
 
 class PipelineItem(BaseModel):
     title: str = Field(..., description="파이프라인 아이템 제목")
-    content: str = Field(..., description="해당 아이템의 목적 및 설명")
-    priority: Priority = Field(..., description="AI가 판단한 우선순위")
+    priority: int = Field(..., description="진행 순서 (숫자가 작을수록 우선순위 높음, 예: 1, 2, 3...)")
     details: List[str] = Field(..., description="세부 구현사항 목록")
 
 
