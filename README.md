@@ -87,8 +87,7 @@ uvicorn app.main:app --reload --port 8000
   "pipeline": [
     {
       "title": "사용자 인증 시스템",
-      "content": "GitHub OAuth2 기반 로그인 및 JWT 토큰 관리",
-      "priority": "HIGH",
+      "priority": 1,
       "details": [
         "GitHub OAuth2 인증 플로우 구현",
         "JWT 발급/검증 미들웨어",

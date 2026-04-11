@@ -1,21 +1,38 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routers.pipeline import router as pipeline_router
+from app.database import init_db
+from app.routers.pipeline import router as legacy_pipeline_router
+from app.routers.pipeline_router import router as pipeline_router
+from app.routers.meeting_router import router as meeting_router
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """앱 시작 시 DB 테이블 자동 생성"""
+    # ORM 모델 import → Base.metadata에 등록
+    import app.models.db  # noqa: F401
+    await init_db()
+    yield
+
 
 app = FastAPI(
-    title="fitai — AI Pipeline Design Service",
+    title="fitai — AI Pipeline & Meeting Intelligence Service",
     description=(
-        "PRD(기획서)를 입력받아 LangGraph 기반 AI가 프로젝트 전체 파이프라인을 설계합니다.\n\n"
+        "PRD(기획서) 분석, AI 파이프라인 설계, 회의록 요약 및 맥락 변환을 제공하는 FastAPI 서비스.\n\n"
         "## 핵심 기능\n"
-        "- PRD PDF + 요구사항 텍스트 → 파이프라인 아이템 목록 자동 생성\n"
-        "- 각 아이템: 제목 / 우선순위(숫자 순서) / 세부 구현사항\n\n"
+        "- **Pipeline**: PRD PDF → LangGraph 기반 파이프라인 자동 설계 → DB 저장\n"
+        "- **Meeting**: 회의록 관리, AI 요약, 파이프라인 스텝 도출\n"
+        "- **MSA 연동**: Spring Boot(Core API)의 project_id, user_id를 논리적 FK로 참조\n\n"
         "## LangGraph 워크플로우\n"
         "`PDF 파싱 → PRD 이해 → 도메인 식별 → 아이템 생성 → 우선순위 정렬`"
     ),
-    version="0.1.0",
+    version="0.2.0",
     docs_url="/docs",
     redoc_url="/redoc",
+    lifespan=lifespan,
 )
 
 # CORS
@@ -28,7 +45,9 @@ app.add_middleware(
 )
 
 # 라우터 등록
-app.include_router(pipeline_router)
+app.include_router(legacy_pipeline_router)  # 기존 /pipeline/generate (하위 호환)
+app.include_router(pipeline_router)         # 신규 /pipelines/** CRUD
+app.include_router(meeting_router)          # 신규 /meetings/** CRUD
 
 
 @app.get("/", tags=["Health"])
@@ -36,6 +55,7 @@ async def root():
     return {
         "service": "fitai",
         "status": "running",
+        "version": "0.2.0",
         "docs": "/docs",
     }
 
