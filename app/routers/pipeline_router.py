@@ -12,11 +12,11 @@ Pipeline Router — REST API
   PATCH  /pipelines/steps/{step_id}     → 스텝 수정
   DELETE /pipelines/steps/{step_id}     → 스텝 삭제
 
-  POST   /pipelines/generate-and-save   → PRD PDF + 직군 기반 AI 파이프라인 생성 + DB 저장
+  POST   /pipelines/generate-and-save   → AI 생성 + DB 저장
 """
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -147,7 +147,7 @@ async def delete_step(
 
 
 # ──────────────────────────────────────────────
-# AI Generate + DB Save
+# AI Generate + DB Save (기존 /pipeline/generate 확장)
 # ──────────────────────────────────────────────
 
 @router.post(
@@ -155,17 +155,14 @@ async def delete_step(
     response_model=PipelineResponse,
     summary="AI 파이프라인 생성 → DB 저장",
     description=(
-        "PRD PDF와 직군(category)을 기반으로 LangGraph AI 파이프라인을 생성하고 DB에 저장합니다.\n"
-        "- project_id: Spring DB의 프로젝트 ID\n"
-        "- category: 직군 (FE, BE, AI 등) — 해당 직군에 맞는 구체적 태스크 생성\n"
-        "- prd_file: PRD PDF (선택) — 없으면 requirements 텍스트만 사용\n"
-        "- 같은 category의 기존 파이프라인은 비활성화됩니다."
+        "PRD PDF + 요구사항 텍스트로 LangGraph AI 파이프라인을 생성하고 "
+        "결과를 DB에 저장합니다. 기존 활성 파이프라인은 비활성화됩니다."
     ),
 )
 async def generate_and_save_pipeline(
-    project_id: int = Form(..., description="Spring DB project ID"),
-    category: str = Form(..., description="직군 카테고리 (FE, BE, AI 등)"),
-    requirements: Optional[str] = Form(None, description="기획자 추가 요구사항 텍스트 (선택)"),
+    project_id: int = Form(..., description="Spring DB의 project ID (Logical FK)"),
+    requirements: str = Form(..., description="기획자 요구사항 텍스트"),
+    category: Optional[str] = Form(None, description="파이프라인 카테고리"),
     prd_file: Optional[UploadFile] = File(None, description="PRD PDF 파일 (선택)"),
     db: AsyncSession = Depends(get_db),
 ):
@@ -179,9 +176,8 @@ async def generate_and_save_pipeline(
     # LangGraph 실행
     try:
         result = await pipeline_graph.ainvoke({
-            "requirements": requirements or "",
+            "requirements": requirements,
             "pdf_bytes": pdf_bytes,
-            "category": category,
             "parsed_text": "",
             "prd_summary": "",
             "domains": [],
@@ -201,6 +197,7 @@ async def generate_and_save_pipeline(
             detail="AI가 파이프라인 아이템을 생성하지 못했습니다.",
         )
 
+    # DB 저장
     pipeline = await pipeline_service.save_ai_pipeline_to_db(
         db, project_id, pipeline_items, category
     )
