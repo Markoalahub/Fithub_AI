@@ -4,8 +4,8 @@ LangGraph-based AI Pipeline Design Workflow
 Nodes:
   1. parse_pdf       — Docling으로 PRD PDF 파싱
   2. understand_prd  — GPT-4o로 PRD 목적/범위/핵심 요구사항 요약
-  3. identify_domains — 프로젝트 도메인 영역 식별
-  4. generate_items  — 파이프라인 아이템 및 세부 구현사항 생성
+  3. identify_domains — 직군(category) 관점에서 담당 도메인 식별
+  4. generate_items  — 직군별 구체적 태스크 생성 (구현 단위 수준)
   5. prioritize      — 우선순위 정렬 (숫자 오름차순)
 """
 import json
@@ -23,15 +23,58 @@ from app.config import get_settings
 
 
 # ──────────────────────────────────────────────
+# 직군별 역할 정의
+# ──────────────────────────────────────────────
+
+CATEGORY_ROLE_MAP = {
+    "FE": (
+        "프론트엔드 개발자",
+        "React/Next.js 기반 UI 구현, 컴포넌트 설계, API 연동, 상태 관리(Zustand/Redux), "
+        "라우팅, 반응형 디자인, 접근성(A11y), 성능 최적화(코드 스플리팅, 이미지 최적화)"
+    ),
+    "BE": (
+        "백엔드 개발자",
+        "REST API 설계 및 구현, DB 스키마 설계, 비즈니스 로직, 인증/인가(JWT/OAuth2), "
+        "캐싱(Redis), 비동기 처리, 외부 API 연동, 테스트 코드 작성, 성능 튜닝"
+    ),
+    "AI": (
+        "AI/ML 엔지니어",
+        "데이터 수집·전처리 파이프라인, 모델 학습·평가, 추론 API 서빙(FastAPI), "
+        "벡터 DB(ChromaDB/Pinecone), RAG 파이프라인, LLM 프롬프트 엔지니어링, MLOps"
+    ),
+    "DEVOPS": (
+        "DevOps 엔지니어",
+        "CI/CD 파이프라인(GitHub Actions), 컨테이너화(Docker/K8s), 클라우드 인프라(AWS/GCP), "
+        "모니터링(Prometheus/Grafana), 로그 수집(ELK), 보안 설정, 오토스케일링"
+    ),
+    "QA": (
+        "QA 엔지니어",
+        "테스트 계획 수립, E2E 테스트(Playwright/Cypress), API 테스트(Postman/pytest), "
+        "성능 테스트(k6/JMeter), 버그 리포트, 회귀 테스트, 테스트 자동화"
+    ),
+}
+
+DEFAULT_ROLE = (
+    "풀스택 개발자",
+    "기능 설계, API 구현, UI 연동, 테스트, 배포"
+)
+
+
+def _get_category_role(category: str) -> tuple[str, str]:
+    return CATEGORY_ROLE_MAP.get(category.upper() if category else "", DEFAULT_ROLE)
+
+
+# ──────────────────────────────────────────────
 # State
 # ──────────────────────────────────────────────
 
 class PipelineState(TypedDict):
     requirements: str            # 기획자 요구사항 텍스트
     pdf_bytes: Optional[bytes]   # 업로드된 PDF 원본 바이트
+    category: str                # 직군 (FE, BE, AI 등)
     parsed_text: str             # Docling 파싱 결과
     prd_summary: str             # PRD 이해/요약 결과
-    domains: List[str]           # 식별된 도메인 영역
+    domains: List[str]           # 직군이 담당할 도메인 영역
     raw_items: str               # LLM이 생성한 JSON 문자열
     pipeline: List[PipelineItem] # 최종 파이프라인 아이템 목록
 
@@ -58,10 +101,8 @@ def parse_pdf(state: PipelineState) -> PipelineState:
     pdf_bytes = state.get("pdf_bytes")
 
     if not pdf_bytes:
-        # PDF 없이 요구사항 텍스트만 있는 경우
         return {**state, "parsed_text": ""}
 
-    # 임시 파일로 저장 후 Docling 변환
     with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
         tmp.write(pdf_bytes)
         tmp_path = tmp.name
@@ -83,6 +124,8 @@ def parse_pdf(state: PipelineState) -> PipelineState:
 def understand_prd(state: PipelineState) -> PipelineState:
     """GPT-4o로 PRD 전체 목적·범위·핵심 요구사항 요약"""
     llm = _get_llm()
+    category = state.get("category", "")
+    role_name, role_desc = _get_category_role(category)
 
     prd_content = ""
     if state.get("parsed_text"):
@@ -92,18 +135,18 @@ def understand_prd(state: PipelineState) -> PipelineState:
 
     messages = [
         SystemMessage(content=(
-            "당신은 시니어 소프트웨어 아키텍트입니다. "
+            f"당신은 시니어 {role_name}입니다. "
             "PRD(Product Requirements Document)를 분석하여 "
-            "프로젝트의 핵심 목적, 범위, 주요 기능 요구사항을 명확하게 요약하세요. "
-            "요약은 이후 파이프라인 설계에 사용됩니다."
+            f"{role_name} 관점에서 핵심 구현 목표, 기술 범위, 주요 기능 요구사항을 요약하세요. "
+            "요약은 이후 구체적인 개발 태스크 설계에 사용됩니다."
         )),
         HumanMessage(content=(
             f"{prd_content}\n\n"
-            "위 PRD를 분석하여 다음을 요약해주세요:\n"
+            f"위 PRD를 {role_name} 관점에서 분석하여 다음을 요약해주세요:\n"
             "1. 프로젝트의 핵심 목적 (1-2문장)\n"
-            "2. 주요 기능 영역\n"
-            "3. 비기능 요구사항 (성능, 보안, 확장성 등)\n"
-            "4. 명시적으로 제외된 범위 (있다면)"
+            f"2. {role_name}이 담당해야 할 주요 기능 영역\n"
+            "3. 기술적 제약사항 및 비기능 요구사항\n"
+            "4. 다른 직군(FE/BE/AI)과의 연동 포인트"
         )),
     ]
 
@@ -112,32 +155,34 @@ def understand_prd(state: PipelineState) -> PipelineState:
 
 
 # ──────────────────────────────────────────────
-# Node 3: 도메인 영역 식별 (GPT-4o)
+# Node 3: 담당 도메인 식별 (직군 특화)
 # ──────────────────────────────────────────────
 
 def identify_domains(state: PipelineState) -> PipelineState:
-    """PRD에서 프로젝트 도메인 영역 식별 (예: 인증, 결제, 알림 등)"""
+    """직군(category) 관점에서 담당할 도메인 영역 식별"""
     llm = _get_llm()
+    category = state.get("category", "")
+    role_name, role_desc = _get_category_role(category)
 
     messages = [
         SystemMessage(content=(
-            "당신은 시니어 소프트웨어 아키텍트입니다. "
-            "PRD 분석 결과를 바탕으로 구현에 필요한 핵심 도메인 영역을 식별하세요. "
+            f"당신은 시니어 {role_name}입니다. "
+            f"{role_name}의 업무 범위: {role_desc}\n"
+            "PRD 분석 결과를 바탕으로 이 직군이 담당해야 할 핵심 개발 도메인을 식별하세요. "
             "각 도메인은 독립적으로 개발 가능한 단위여야 합니다."
         )),
         HumanMessage(content=(
             f"## PRD 분석 결과\n{state['prd_summary']}\n\n"
             f"## 원본 요구사항\n{state.get('requirements', '')}\n\n"
-            "위 PRD에서 개발이 필요한 핵심 도메인 영역을 식별해주세요. "
-            "JSON 배열 형식으로만 응답하세요. 예시:\n"
-            '["사용자 인증", "프로필 관리", "데이터 분석", "알림 시스템"]'
+            f"{role_name}이 개발해야 할 핵심 도메인 영역을 식별해주세요. "
+            "JSON 배열 형식으로만 응답하세요. 예시 (BE의 경우):\n"
+            '["사용자 인증 API", "운동 기록 CRUD API", "소셜 피드 API", "알림 서비스"]'
         )),
     ]
 
     response = llm.invoke(messages)
     content = response.content.strip()
 
-    # JSON 파싱 (코드블록 제거)
     if "```" in content:
         content = content.split("```")[1]
         if content.startswith("json"):
@@ -148,7 +193,6 @@ def identify_domains(state: PipelineState) -> PipelineState:
         if not isinstance(domains, list):
             domains = [content]
     except json.JSONDecodeError:
-        # 파싱 실패 시 텍스트에서 추출
         domains = [line.strip().lstrip("-•").strip()
                    for line in content.splitlines()
                    if line.strip() and not line.startswith("[")]
@@ -157,41 +201,83 @@ def identify_domains(state: PipelineState) -> PipelineState:
 
 
 # ──────────────────────────────────────────────
-# Node 4: 파이프라인 아이템 생성 (GPT-4o)
+# Node 4: 직군별 구체적 파이프라인 아이템 생성
 # ──────────────────────────────────────────────
 
 def generate_items(state: PipelineState) -> PipelineState:
-    """각 도메인별 파이프라인 아이템 및 세부 구현사항 생성"""
+    """직군에 맞는 구현 단위 수준의 파이프라인 태스크 생성"""
     llm = _get_llm()
-
+    category = state.get("category", "")
+    role_name, role_desc = _get_category_role(category)
     domains_str = "\n".join(f"- {d}" for d in state.get("domains", []))
+
+    # 직군별 details 작성 가이드
+    details_guide = {
+        "FE": (
+            "- 구현할 컴포넌트명과 props 구조\n"
+            "- 사용할 라이브러리/훅 (예: useQuery, useForm)\n"
+            "- API 연동 방식 (엔드포인트, request/response 구조)\n"
+            "- 상태 관리 방법 (전역/로컬)\n"
+            "- UI/UX 고려사항 (로딩, 에러, 빈 상태 처리)"
+        ),
+        "BE": (
+            "- API 엔드포인트 (메서드 + URL)\n"
+            "- Request/Response DTO 필드\n"
+            "- DB 테이블/컬럼 설계\n"
+            "- 비즈니스 로직 핵심 처리 흐름\n"
+            "- 예외 처리 및 유효성 검사 규칙"
+        ),
+        "AI": (
+            "- 사용 모델/알고리즘\n"
+            "- 입력 데이터 형식 및 전처리 방법\n"
+            "- 출력 형식 및 후처리 방법\n"
+            "- 평가 지표 및 목표 성능\n"
+            "- API 서빙 방식 및 응답 스펙"
+        ),
+    }.get(category.upper() if category else "", (
+        "- 구체적인 구현 방법\n"
+        "- 사용 기술 스택\n"
+        "- 입출력 스펙\n"
+        "- 예외 처리 방법\n"
+        "- 완료 기준"
+    ))
 
     messages = [
         SystemMessage(content=(
-            "당신은 시니어 소프트웨어 아키텍트입니다. "
-            "식별된 도메인 영역을 바탕으로 구체적인 파이프라인 아이템을 설계하세요. "
-            "각 아이템은 명확한 제목, 목적 설명, 그리고 개발자가 바로 착수할 수 있는 "
-            "세부 구현사항 목록을 포함해야 합니다."
+            f"당신은 10년 경력의 시니어 {role_name}입니다.\n"
+            f"업무 범위: {role_desc}\n\n"
+            "PRD와 담당 도메인을 바탕으로 즉시 개발에 착수할 수 있는 수준의 "
+            "구체적인 파이프라인 태스크를 설계하세요.\n"
+            "각 태스크의 세부 구현사항은 주니어 개발자가 읽고 바로 구현할 수 있을 만큼 "
+            "명확하고 기술적으로 상세해야 합니다."
         )),
         HumanMessage(content=(
             f"## PRD 분석 결과\n{state['prd_summary']}\n\n"
-            f"## 식별된 도메인 영역\n{domains_str}\n\n"
+            f"## {role_name} 담당 도메인\n{domains_str}\n\n"
             f"## 원본 요구사항\n{state.get('requirements', '')}\n\n"
-            "위 도메인들을 바탕으로 파이프라인 아이템 목록을 생성해주세요.\n"
-            "반드시 아래 JSON 형식으로만 응답하세요:\n"
+            f"위 내용을 바탕으로 {role_name}의 파이프라인 태스크를 생성하세요.\n\n"
+            "**세부 구현사항 작성 가이드:**\n"
+            f"{details_guide}\n\n"
+            "**반드시 아래 JSON 형식으로만 응답하세요:**\n"
             """[
   {
-    "title": "파이프라인 아이템 제목",
+    "title": "태스크 제목 (동사로 시작, 예: '사용자 로그인 API 구현')",
     "priority": 1,
     "details": [
-      "세부 구현사항 1",
-      "세부 구현사항 2",
-      "세부 구현사항 3"
+      "구체적인 구현 사항 1 (기술 스펙 포함)",
+      "구체적인 구현 사항 2",
+      "구체적인 구현 사항 3",
+      "구체적인 구현 사항 4",
+      "완료 기준 또는 테스트 방법"
     ]
   }
 ]"""
-            "\n\npriority는 반드시 숫자로 표기하여 진행 순서를 나타내주세요 (1부터 시작). "
-            "세부 구현사항은 각 아이템당 3-5개를 작성하세요."
+            "\n\n"
+            "규칙:\n"
+            "- priority는 개발 의존성을 고려한 순서 (1부터 시작, 선행 태스크가 낮은 번호)\n"
+            "- 태스크 수: 5~10개 (너무 크면 분리, 너무 작으면 합치기)\n"
+            "- details는 각 태스크당 4~6개, 모두 기술적으로 구체적으로 작성\n"
+            "- 태스크 제목에 직군명(FE/BE 등)을 포함하지 말 것"
         )),
     ]
 
@@ -207,11 +293,9 @@ def prioritize(state: PipelineState) -> PipelineState:
     """파이프라인 아이템 파싱, 검증, 우선순위 정렬"""
     raw = state.get("raw_items", "")
 
-    # 코드블록 제거
     content = raw.strip()
     if "```" in content:
         parts = content.split("```")
-        # json 블록 추출
         for part in parts:
             stripped = part.strip()
             if stripped.startswith("json"):
@@ -224,7 +308,6 @@ def prioritize(state: PipelineState) -> PipelineState:
     try:
         raw_list = json.loads(content)
     except json.JSONDecodeError:
-        # 파싱 실패 시 LLM으로 재정제
         llm = _get_llm()
         fix_messages = [
             SystemMessage(content="JSON 형식 수정 전문가입니다. 주어진 텍스트에서 유효한 JSON 배열을 추출하세요."),
@@ -233,7 +316,6 @@ def prioritize(state: PipelineState) -> PipelineState:
         fix_response = llm.invoke(fix_messages)
         raw_list = json.loads(fix_response.content.strip())
 
-    # Pydantic 모델로 변환 및 검증
     items: List[PipelineItem] = []
     for item in raw_list:
         try:
@@ -247,9 +329,7 @@ def prioritize(state: PipelineState) -> PipelineState:
             details=item.get("details", []),
         ))
 
-    # 우선순위 오름차순(1, 2, 3...)으로 정렬
     items.sort(key=lambda x: x.priority)
-
     return {**state, "pipeline": items}
 
 

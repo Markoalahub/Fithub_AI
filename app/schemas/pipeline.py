@@ -81,3 +81,10 @@ class PipelineListResponse(BaseModel):
     """파이프라인 목록 응답"""
     pipelines: List[PipelineResponse]
     total: int
+
+
+class PipelineGenerateRequest(BaseModel):
+    """AI 파이프라인 생성 요청 (JSON body)"""
+    project_id: int = Field(..., description="Spring DB project ID")
+    requirements: str = Field(..., description="기획자 요구사항 텍스트")
+    category: Optional[str] = Field(None, description="직군 카테고리 (FE, BE, AI 등)")

@@ -167,25 +167,29 @@ async def save_ai_pipeline_to_db(
 ) -> Pipeline:
     """
     LangGraph가 생성한 PipelineItem 리스트를 DB에 저장.
-    - 기존 활성 파이프라인을 비활성화
+    - 같은 project_id + category의 기존 활성 파이프라인만 비활성화 (다른 직군은 유지)
     - 새 파이프라인 버전 생성
     """
-    # 기존 active 파이프라인 비활성화
-    existing = await db.execute(
-        select(Pipeline).where(
-            Pipeline.project_id == project_id,
-            Pipeline.is_active == True,  # noqa: E712
-        )
+    # 같은 category의 기존 active 파이프라인만 비활성화
+    query = select(Pipeline).where(
+        Pipeline.project_id == project_id,
+        Pipeline.is_active == True,  # noqa: E712
     )
+    if category:
+        query = query.where(Pipeline.category == category)
+    existing = await db.execute(query)
     for pipeline in existing.scalars().all():
         pipeline.is_active = False
 
-    # 최신 버전 번호 조회
-    version_result = await db.execute(
+    # 같은 category 내 최신 버전 번호 조회
+    version_query = (
         select(Pipeline.version)
         .where(Pipeline.project_id == project_id)
-        .order_by(Pipeline.version.desc())
-        .limit(1)
+    )
+    if category:
+        version_query = version_query.where(Pipeline.category == category)
+    version_result = await db.execute(
+        version_query.order_by(Pipeline.version.desc()).limit(1)
     )
     latest_version = version_result.scalar_one_or_none() or 0
 
