@@ -15,8 +15,6 @@ Pipeline Router — REST API
   POST   /pipelines/generate-and-save   → AI 생성 + DB 저장
 """
 from typing import Optional
-from concurrent.futures import ThreadPoolExecutor
-import asyncio
 
 from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -32,9 +30,7 @@ from app.schemas.pipeline import (
     PipelineStepResponse,
 )
 from app.services import pipeline_service
-from app.graph.pipeline_graph_v2 import pipeline_graph_v2
-from app.graph.multi_category_pipeline_graph import build_multi_category_pipeline_graph
-from app.graph.pipeline_evaluator import PipelineEvaluator
+from app.graph.pipeline_graph import pipeline_graph
 
 router = APIRouter(prefix="/pipelines", tags=["Pipelines"])
 
@@ -154,10 +150,6 @@ async def delete_step(
 # AI Generate + DB Save (기존 /pipeline/generate 확장)
 # ──────────────────────────────────────────────
 
-# ──────────────────────────────────────────────
-# AI Generate + DB Save (기존 /pipeline/generate 확장)
-# ──────────────────────────────────────────────
-
 @router.post(
     "/generate-and-save",
     response_model=PipelineResponse,
@@ -181,19 +173,17 @@ async def generate_and_save_pipeline(
             raise HTTPException(status_code=400, detail="PDF 파일만 업로드 가능합니다.")
         pdf_bytes = await prd_file.read()
 
-    # LangGraph 실행 (v2: 템플릿 기반)
+    # LangGraph 실행
     try:
-        result = await pipeline_graph_v2.ainvoke({
+        result = await pipeline_graph.ainvoke({
             "requirements": requirements,
             "pdf_bytes": pdf_bytes,
             "category": category or "BE",
             "parsed_text": "",
             "prd_summary": "",
-            "tech_stack": [],
-            "template_name": "",
-            "selected_template": {},
             "domains": [],
-            "phases": [],
+            "framework": None,
+            "template_stages": None,
             "raw_items": "",
             "pipeline": [],
         })
@@ -215,118 +205,3 @@ async def generate_and_save_pipeline(
         db, project_id, pipeline_items, category
     )
     return pipeline
-
-
-# ──────────────────────────────────────────────
-# Multi-Category Pipeline Generation
-# ──────────────────────────────────────────────
-
-@router.post(
-    "/generate-multi",
-    summary="다중 직군 파이프라인 생성",
-    description=(
-        "PRD PDF + 요구사항으로 FE/BE/DevOps/AI 여러 직군의 파이프라인을 "
-        "동시에 생성하고 DB에 저장합니다."
-    ),
-)
-async def generate_multi_category_pipelines(
-    project_id: int = Form(..., description="Spring DB의 project ID"),
-    requirements: str = Form(..., description="기획자 요구사항 텍스트"),
-    prd_file: Optional[UploadFile] = File(None, description="PRD PDF 파일 (선택)"),
-    categories: Optional[str] = Form(
-        "FE,BE",
-        description="생성할 직군 목록 (쉼표 구분, 기본: FE,BE, 가능: FE/BE/DevOps/AI)",
-    ),
-    db: AsyncSession = Depends(get_db),
-):
-    """
-    다중 직군의 파이프라인을 동시에 생성
-
-    예시:
-    - categories="FE,BE" → 프론트+백엔드만 생성
-    - categories="FE,BE,DevOps,AI" → 모든 직군 생성
-    """
-    # PDF 바이트 읽기
-    pdf_bytes: Optional[bytes] = None
-    if prd_file is not None:
-        if not prd_file.filename.endswith(".pdf"):
-            raise HTTPException(status_code=400, detail="PDF 파일만 업로드 가능합니다.")
-        pdf_bytes = await prd_file.read()
-
-    # 카테고리 파싱
-    category_list = [cat.strip().upper() for cat in categories.split(",")]
-    valid_categories = {"FE", "BE", "DEVOPS", "AI"}
-    category_list = [cat for cat in category_list if cat in valid_categories]
-
-    if not category_list:
-        raise HTTPException(
-            status_code=400,
-            detail=f"유효한 직군을 선택하세요: {', '.join(valid_categories)}",
-        )
-
-    # LangGraph 실행 (동기 함수를 비동기로 래핑)
-    try:
-        loop = asyncio.get_event_loop()
-        graph = build_multi_category_pipeline_graph()
-        result = await loop.run_in_executor(
-            ThreadPoolExecutor(max_workers=1),
-            lambda: graph.invoke({
-                "requirements": requirements,
-                "pdf_bytes": pdf_bytes,
-                "categories": category_list,
-                "parsed_text": "",
-                "global_prd_summary": "",
-                "pipelines": {},
-            })
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"AI 파이프라인 생성 중 오류: {str(e)}",
-        )
-
-    # 각 직군별 파이프라인 DB 저장 및 평가
-    pipelines_result = {}
-    pipelines = result.get("pipelines", {})
-    evaluator = PipelineEvaluator()
-
-    for category, pipeline_data in pipelines.items():
-        try:
-            # 아이템을 파이프라인 아이템 객체로 변환
-            items = pipeline_data.get("items", [])
-
-            # DB 저장
-            saved_pipeline = await pipeline_service.save_ai_pipeline_to_db(
-                db, project_id, items, category
-            )
-
-            # 파이프라인 평가 (LangSmith 자동 추적)
-            eval_items = [
-                {"title": item.get("title", ""), "description": item.get("details", "")}
-                for item in items
-            ]
-            evaluation_result = evaluator.evaluate(category, eval_items)
-
-            pipelines_result[category] = {
-                "id": saved_pipeline.id,
-                "template": pipeline_data.get("template", {}).get("name", ""),
-                "status": "created",
-                "evaluation_score": evaluation_result.get("total_score", 0),
-            }
-        except Exception as e:
-            pipelines_result[category] = {
-                "status": "failed",
-                "error": str(e),
-            }
-
-    if not pipelines_result:
-        raise HTTPException(
-            status_code=500,
-            detail="생성된 파이프라인이 없습니다.",
-        )
-
-    return {
-        "project_id": project_id,
-        "pipelines": pipelines_result,
-        "total": len(pipelines_result),
-    }
