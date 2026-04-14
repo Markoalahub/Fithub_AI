@@ -166,7 +166,7 @@ def _generate_category_pipeline(
     requirements: str,
     parsed_text: str,
 ) -> tuple[str, Dict]:
-    """단일 직군의 파이프라인 생성"""
+    """단일 직군의 파이프라인 생성 (Phase 구조 명시)"""
     llm = _get_llm()
     role_name, role_desc = CATEGORY_ROLE_MAP.get(category, ("개발자", ""))
     template = TEMPLATE_MAP.get(category)
@@ -177,51 +177,80 @@ def _generate_category_pipeline(
     if requirements:
         prd_content += f"## 기획자 요구사항\n{requirements}\n\n"
 
-    # 1단계: 직군 관점의 요구사항 분석
+    # 1단계: 직군 관점의 요구사항 분석 + 도메인 식별
     understand_msg = [
         SystemMessage(content=(
             f"당신은 시니어 {role_name}입니다. "
             f"역할: {role_desc}\n"
             f"전체 프로젝트 분석:\n{global_summary}\n\n"
-            f"이를 바탕으로 당신의 직군({category})이 구현해야 할 구체적인 요구사항을 분석하세요."
+            f"이를 바탕으로 당신의 직군({category})이 구현해야 할 구체적인 요구사항과 "
+            f"도메인(예: User, Auth, Payment 등)을 식별하세요."
         )),
         HumanMessage(content=(
             f"{prd_content}\n"
-            f"{role_name}({category})이 개발해야 할 구체적인 요구사항은 무엇인가요?"
+            f"{role_name}({category})이 개발해야 할 구체적인 요구사항과 주요 도메인은 무엇인가요?"
         )),
     ]
 
     understand_response = llm.invoke(understand_msg)
     category_summary = understand_response.content
 
-    # 2단계: 개발 아이템 생성
-    details_guide = {
-        "FE": "- 페이지/컴포넌트명\n- API 연동 방식\n- 상태 관리 전략",
-        "BE": "- API 엔드포인트\n- DB 테이블\n- 비즈니스 로직",
-        "DEVOPS": "- 인프라 구성\n- CI/CD 단계\n- 모니터링 대상",
-        "AI": "- 데이터 소스\n- 모델 타입\n- 평가 지표",
-    }.get(category, "- 구체적인 구현 방법")
+    # 2단계: Phase 구조 기반 파이프라인 생성
+    # 템플릿의 Phase 정보 추출
+    template_phases = template.get("phases", []) if template else []
+    phase_info = "\n".join([
+        f"Phase {p.get('phase_num')}: {p.get('name')} ({p.get('type')})\n"
+        f"  설명: {p.get('steps')[0].get('title') if p.get('steps') else 'N/A'}"
+        for p in template_phases[:2]  # Phase 1, 2만 표시
+    ])
 
     items_msg = [
         SystemMessage(content=(
             f"당신은 10년 경력의 시니어 {role_name}입니다.\n"
             f"역할: {role_desc}\n\n"
-            "PRD 분석 결과를 바탕으로 즉시 개발에 착수할 수 있는 수준의 "
-            "구체적인 파이프라인 아이템을 5~10개 생성하세요."
+            "**매우 중요: 다음 Phase 구조를 정확히 따르세요!**\n\n"
+            f"## {role_name} 개발 템플릿 Phase 구조\n{phase_info}\n\n"
+            "## 파이프라인 생성 규칙\n"
+            "- Phase 1, 2는 고정 (프레임워크 설정, 기반 구조)\n"
+            "- Phase 3부터는 식별된 각 도메인마다 반복\n"
+            "- 각 Phase 내 step은 1-2시간 개발 단위\n"
+            "- 예: Phase 3 (User 도메인), Phase 4 (Auth 도메인), Phase 5 (Payment 도메인)...\n\n"
+            "PRD 분석 결과를 바탕으로 Phase별 파이프라인을 생성하세요."
         )),
         HumanMessage(content=(
             f"## 분석 결과\n{category_summary}\n\n"
-            f"## 개발 가이드\n{details_guide}\n\n"
-            "**JSON 형식으로만 응답하세요:**\n"
+            "**다음 JSON 형식으로만 응답하세요 (Phase 구조 포함):**\n"
             """[
   {
-    "title": "구현할 기능명",
+    "phase": 3,
+    "domain": "User",
+    "title": "데이터 모델링 및 Entity 설계",
     "priority": 1,
     "details": [
-      "구체적인 구현 사항 1",
-      "구체적인 구현 사항 2",
-      "완료 기준"
+      "User Entity 클래스 생성 (@Entity, @Table)",
+      "PK, FK, 인덱스 설정",
+      "Validation 어노테이션 추가",
+      "완료 기준: Entity가 설계 문서와 일치하고 빌드 성공"
     ]
+  },
+  {
+    "phase": 3,
+    "domain": "User",
+    "title": "Repository 구현",
+    "priority": 2,
+    "details": [
+      "UserRepository 인터페이스 생성 (JpaRepository 상속)",
+      "커스텀 쿼리 메서드 정의 (findByXxx 등)",
+      "페이징 처리 (Pageable, Page<T>)",
+      "완료 기준: Repository가 정상적으로 DB 쿼리 실행"
+    ]
+  },
+  {
+    "phase": 4,
+    "domain": "Auth",
+    "title": "JWT Filter 구현",
+    "priority": 5,
+    "details": [...]
   }
 ]"""
         )),
@@ -232,7 +261,8 @@ def _generate_category_pipeline(
     # JSON 파싱
     content = items_response.content.strip()
     if "```" in content:
-        content = content.split("```")[1].lstrip("json\n")
+        parts = content.split("```")
+        content = parts[1].lstrip("json\n") if len(parts) > 1 else content
 
     try:
         items = json.loads(content)

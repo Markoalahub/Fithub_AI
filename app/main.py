@@ -4,9 +4,13 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.database import init_db
+from app.config import init_langsmith
 from app.routers.pipeline import router as legacy_pipeline_router
 from app.routers.pipeline_router import router as pipeline_router
 from app.routers.meeting_router import router as meeting_router
+
+# Langsmith 초기화
+init_langsmith()
 
 
 @asynccontextmanager

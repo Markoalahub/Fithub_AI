@@ -197,8 +197,12 @@ async def save_ai_pipeline_to_db(
         is_active=True,
         steps=[
             PipelineStepCreate(
-                title=item.title,
-                description="\n".join(item.details) if hasattr(item, "details") else None,
+                title=(item.title if hasattr(item, 'title') else item.get('title', '')),
+                description=(
+                    "\n".join(item.details)
+                    if hasattr(item, "details")
+                    else "\n".join(item.get('details', []))
+                ),
                 is_completed=False,
                 origin="ai_generated",
             )

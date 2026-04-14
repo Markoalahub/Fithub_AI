@@ -15,6 +15,8 @@ Pipeline Router — REST API
   POST   /pipelines/generate-and-save   → AI 생성 + DB 저장
 """
 from typing import Optional
+from concurrent.futures import ThreadPoolExecutor
+import asyncio
 
 from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -32,6 +34,7 @@ from app.schemas.pipeline import (
 from app.services import pipeline_service
 from app.graph.pipeline_graph_v2 import pipeline_graph_v2
 from app.graph.multi_category_pipeline_graph import build_multi_category_pipeline_graph
+from app.graph.pipeline_evaluator import PipelineEvaluator
 
 router = APIRouter(prefix="/pipelines", tags=["Pipelines"])
 
@@ -151,6 +154,10 @@ async def delete_step(
 # AI Generate + DB Save (기존 /pipeline/generate 확장)
 # ──────────────────────────────────────────────
 
+# ──────────────────────────────────────────────
+# AI Generate + DB Save (기존 /pipeline/generate 확장)
+# ──────────────────────────────────────────────
+
 @router.post(
     "/generate-and-save",
     response_model=PipelineResponse,
@@ -257,26 +264,31 @@ async def generate_multi_category_pipelines(
             detail=f"유효한 직군을 선택하세요: {', '.join(valid_categories)}",
         )
 
-    # LangGraph 실행
+    # LangGraph 실행 (동기 함수를 비동기로 래핑)
     try:
+        loop = asyncio.get_event_loop()
         graph = build_multi_category_pipeline_graph()
-        result = await graph.ainvoke({
-            "requirements": requirements,
-            "pdf_bytes": pdf_bytes,
-            "categories": category_list,
-            "parsed_text": "",
-            "global_prd_summary": "",
-            "pipelines": {},
-        })
+        result = await loop.run_in_executor(
+            ThreadPoolExecutor(max_workers=1),
+            lambda: graph.invoke({
+                "requirements": requirements,
+                "pdf_bytes": pdf_bytes,
+                "categories": category_list,
+                "parsed_text": "",
+                "global_prd_summary": "",
+                "pipelines": {},
+            })
+        )
     except Exception as e:
         raise HTTPException(
             status_code=500,
             detail=f"AI 파이프라인 생성 중 오류: {str(e)}",
         )
 
-    # 각 직군별 파이프라인 DB 저장
+    # 각 직군별 파이프라인 DB 저장 및 평가
     pipelines_result = {}
     pipelines = result.get("pipelines", {})
+    evaluator = PipelineEvaluator()
 
     for category, pipeline_data in pipelines.items():
         try:
@@ -288,10 +300,18 @@ async def generate_multi_category_pipelines(
                 db, project_id, items, category
             )
 
+            # 파이프라인 평가 (LangSmith 자동 추적)
+            eval_items = [
+                {"title": item.get("title", ""), "description": item.get("details", "")}
+                for item in items
+            ]
+            evaluation_result = evaluator.evaluate(category, eval_items)
+
             pipelines_result[category] = {
                 "id": saved_pipeline.id,
                 "template": pipeline_data.get("template", {}).get("name", ""),
                 "status": "created",
+                "evaluation_score": evaluation_result.get("total_score", 0),
             }
         except Exception as e:
             pipelines_result[category] = {
