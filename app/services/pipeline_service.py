@@ -115,6 +115,8 @@ async def create_pipeline_step(
         pipeline_id=pipeline_id,
         title=data.title,
         description=data.description,
+        duration=data.duration,
+        tech_stack=data.tech_stack,
         is_completed=data.is_completed,
         origin=data.origin,
     )
@@ -197,8 +199,14 @@ async def save_ai_pipeline_to_db(
         is_active=True,
         steps=[
             PipelineStepCreate(
-                title=item.title,
-                description="\n".join(item.details) if hasattr(item, "details") else None,
+                title=(item.title if hasattr(item, 'title') else item.get('title', '')),
+                description=(
+                    "\n".join(item.details)
+                    if hasattr(item, "details")
+                    else "\n".join(item.get('details', []))
+                ),
+                duration=getattr(item, "duration", None) if hasattr(item, "__dict__") else item.get('duration'),
+                tech_stack=getattr(item, "tech_stack", None) if hasattr(item, "__dict__") else item.get('tech_stack'),
                 is_completed=False,
                 origin="ai_generated",
             )

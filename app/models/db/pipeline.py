@@ -56,6 +56,8 @@ class PipelineStep(Base):
     )
     title = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
+    duration = Column(String(100), nullable=True, comment="예상 소요 시간 (예: '2-3일')")
+    tech_stack = Column(String(200), nullable=True, comment="기술스택 (예: 'Spring Boot 3.x')")
     is_completed = Column(Boolean, nullable=False, default=False)
     origin = Column(
         String(50),

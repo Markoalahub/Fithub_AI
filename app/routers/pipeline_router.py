@@ -178,9 +178,12 @@ async def generate_and_save_pipeline(
         result = await pipeline_graph.ainvoke({
             "requirements": requirements,
             "pdf_bytes": pdf_bytes,
+            "category": category or "BE",
             "parsed_text": "",
             "prd_summary": "",
             "domains": [],
+            "framework": None,
+            "template_stages": None,
             "raw_items": "",
             "pipeline": [],
         })

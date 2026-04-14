@@ -15,6 +15,8 @@ class PipelineStepCreate(BaseModel):
     """파이프라인 스텝 생성 요청"""
     title: str = Field(..., max_length=255, description="스텝 제목")
     description: Optional[str] = Field(None, description="스텝 설명")
+    duration: Optional[str] = Field(None, max_length=100, description="예상 소요 시간")
+    tech_stack: Optional[str] = Field(None, max_length=200, description="기술스택")
     is_completed: bool = Field(False, description="완료 여부")
     origin: Optional[str] = Field(
         None,
@@ -27,6 +29,8 @@ class PipelineStepUpdate(BaseModel):
     """파이프라인 스텝 수정 요청"""
     title: Optional[str] = Field(None, max_length=255)
     description: Optional[str] = None
+    duration: Optional[str] = Field(None, max_length=100)
+    tech_stack: Optional[str] = Field(None, max_length=200)
     is_completed: Optional[bool] = None
     origin: Optional[str] = Field(None, max_length=50)
 
@@ -39,6 +43,8 @@ class PipelineStepResponse(BaseModel):
     pipeline_id: int
     title: str
     description: Optional[str] = None
+    duration: Optional[str] = None
+    tech_stack: Optional[str] = None
     is_completed: bool
     origin: Optional[str] = None
 

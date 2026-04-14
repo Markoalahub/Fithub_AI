@@ -20,6 +20,7 @@ from docling.document_converter import DocumentConverter
 
 from app.models.pipeline import PipelineItem
 from app.config import get_settings
+from app.utils.template_loader import template_loader, get_supported_frameworks
 
 
 # ──────────────────────────────────────────────
@@ -75,6 +76,8 @@ class PipelineState(TypedDict):
     parsed_text: str             # Docling 파싱 결과
     prd_summary: str             # PRD 이해/요약 결과
     domains: List[str]           # 직군이 담당할 도메인 영역
+    framework: Optional[str]      # 감지된 기술스택 (spring_boot, react 등)
+    template_stages: Optional[dict]  # 선택된 템플릿의 단계 정보
     raw_items: str               # LLM이 생성한 JSON 문자열
     pipeline: List[PipelineItem] # 최종 파이프라인 아이템 목록
 
@@ -201,15 +204,82 @@ def identify_domains(state: PipelineState) -> PipelineState:
 
 
 # ──────────────────────────────────────────────
-# Node 4: 직군별 구체적 파이프라인 아이템 생성
+# Node 4: 기술스택 감지 (템플릿 매핑)
+# ──────────────────────────────────────────────
+
+def detect_framework(state: PipelineState) -> PipelineState:
+    """PDF와 요구사항에서 기술스택 감지 → 지원되는 프레임워크 매핑"""
+    llm = _get_llm()
+    category = state.get("category", "").upper()
+    supported = get_supported_frameworks()
+
+    prd_content = ""
+    if state.get("parsed_text"):
+        prd_content += f"## PRD 문서\n{state['parsed_text']}\n\n"
+    if state.get("requirements"):
+        prd_content += f"## 요구사항\n{state['requirements']}"
+
+    # 직군에 따라 기대되는 프레임워크 설정
+    category_framework_map = {
+        "BE": ["spring_boot"],  # 백엔드는 Spring Boot 지원
+        "FE": ["react"],         # 프론트엔드는 React 지원
+    }
+    expected_frameworks = category_framework_map.get(category, supported)
+
+    messages = [
+        SystemMessage(content=(
+            "당신은 기술 스택 분석 전문가입니다. "
+            "주어진 PRD와 요구사항에서 사용될 기술을 분석하세요.\n\n"
+            f"사용 가능한 프레임워크: {', '.join(expected_frameworks)}\n"
+            "위 목록 중에서 적절한 하나를 선택하세요."
+        )),
+        HumanMessage(content=(
+            f"{prd_content}\n\n"
+            f"위 내용을 분석하여 다음을 정확히 선택하세요:\n"
+            f"가능한 선택: {', '.join(expected_frameworks)}\n\n"
+            "응답은 프레임워크명(snake_case)만 제시하세요. 예: spring_boot 또는 react"
+        )),
+    ]
+
+    response = llm.invoke(messages)
+    detected_framework = response.content.strip().lower()
+
+    # 유효성 검증
+    if detected_framework not in expected_frameworks:
+        detected_framework = expected_frameworks[0]  # 기본값
+
+    # 템플릿 로드
+    template = template_loader.get_template(detected_framework)
+    template_stages = None
+    if template:
+        template_stages = {
+            stage.order: {
+                "title": stage.title,
+                "description": stage.description,
+                "key_points": stage.key_points,
+            }
+            for stage in template.stages
+        }
+
+    return {
+        **state,
+        "framework": detected_framework,
+        "template_stages": template_stages,
+    }
+
+
+# ──────────────────────────────────────────────
+# Node 5: 직군별 구체적 파이프라인 아이템 생성 (템플릿 기반)
 # ──────────────────────────────────────────────
 
 def generate_items(state: PipelineState) -> PipelineState:
-    """직군에 맞는 구현 단위 수준의 파이프라인 태스크 생성"""
+    """직군 + 템플릿 기반 구체적 파이프라인 태스크 생성"""
     llm = _get_llm()
     category = state.get("category", "")
     role_name, role_desc = _get_category_role(category)
     domains_str = "\n".join(f"- {d}" for d in state.get("domains", []))
+    framework = state.get("framework")
+    template_stages = state.get("template_stages")
 
     # 직군별 details 작성 가이드
     details_guide = {
@@ -242,17 +312,28 @@ def generate_items(state: PipelineState) -> PipelineState:
         "- 완료 기준"
     ))
 
+    # 템플릿 정보를 프롬프트에 포함
+    template_context = ""
+    if template_stages:
+        template_context = "## 개발 파이프라인 템플릿 (참고)\n\n다음은 표준 개발 단계입니다. 이를 바탕으로 요구사항에 맞게 세부화하세요:\n\n"
+        for order in sorted(template_stages.keys()):
+            stage = template_stages[order]
+            template_context += f"{order}. {stage['title']}: {stage['description']}\n"
+        template_context += "\n"
+
     messages = [
         SystemMessage(content=(
             f"당신은 10년 경력의 시니어 {role_name}입니다.\n"
             f"업무 범위: {role_desc}\n\n"
-            "PRD와 담당 도메인을 바탕으로 즉시 개발에 착수할 수 있는 수준의 "
-            "구체적인 파이프라인 태스크를 설계하세요.\n"
+            f"기술스택: {framework}\n\n"
+            "표준 개발 파이프라인 단계를 기반으로, "
+            "PRD와 요구사항에 맞는 구체적인 파이프라인 태스크를 설계하세요.\n"
             "각 태스크의 세부 구현사항은 주니어 개발자가 읽고 바로 구현할 수 있을 만큼 "
             "명확하고 기술적으로 상세해야 합니다."
         )),
         HumanMessage(content=(
             f"## PRD 분석 결과\n{state['prd_summary']}\n\n"
+            f"{template_context}"
             f"## {role_name} 담당 도메인\n{domains_str}\n\n"
             f"## 원본 요구사항\n{state.get('requirements', '')}\n\n"
             f"위 내용을 바탕으로 {role_name}의 파이프라인 태스크를 생성하세요.\n\n"
@@ -263,6 +344,8 @@ def generate_items(state: PipelineState) -> PipelineState:
   {
     "title": "태스크 제목 (동사로 시작, 예: '사용자 로그인 API 구현')",
     "priority": 1,
+    "duration": "2-3일",
+    "tech_stack": "Spring Boot 3.x, JPA",
     "details": [
       "구체적인 구현 사항 1 (기술 스펙 포함)",
       "구체적인 구현 사항 2",
@@ -275,6 +358,8 @@ def generate_items(state: PipelineState) -> PipelineState:
             "\n\n"
             "규칙:\n"
             "- priority는 개발 의존성을 고려한 순서 (1부터 시작, 선행 태스크가 낮은 번호)\n"
+            "- duration은 예상 소요 시간 (예: '1-2일', '3-5일', '1주')\n"
+            "- tech_stack은 이 태스크에 필요한 기술 (예: 'Spring Boot 3.x, JPA', 'React Hooks, TypeScript')\n"
             "- 태스크 수: 5~10개 (너무 크면 분리, 너무 작으면 합치기)\n"
             "- details는 각 태스크당 4~6개, 모두 기술적으로 구체적으로 작성\n"
             "- 태스크 제목에 직군명(FE/BE 등)을 포함하지 말 것"
@@ -286,7 +371,7 @@ def generate_items(state: PipelineState) -> PipelineState:
 
 
 # ──────────────────────────────────────────────
-# Node 5: 우선순위 정렬 및 검증
+# Node 6: 우선순위 정렬 및 검증
 # ──────────────────────────────────────────────
 
 def prioritize(state: PipelineState) -> PipelineState:
@@ -327,6 +412,8 @@ def prioritize(state: PipelineState) -> PipelineState:
             title=item.get("title", ""),
             priority=priority_val,
             details=item.get("details", []),
+            duration=item.get("duration", ""),
+            tech_stack=item.get("tech_stack", ""),
         ))
 
     items.sort(key=lambda x: x.priority)
@@ -343,13 +430,15 @@ def build_pipeline_graph() -> StateGraph:
     graph.add_node("parse_pdf", parse_pdf)
     graph.add_node("understand_prd", understand_prd)
     graph.add_node("identify_domains", identify_domains)
+    graph.add_node("detect_framework", detect_framework)
     graph.add_node("generate_items", generate_items)
     graph.add_node("prioritize", prioritize)
 
     graph.set_entry_point("parse_pdf")
     graph.add_edge("parse_pdf", "understand_prd")
     graph.add_edge("understand_prd", "identify_domains")
-    graph.add_edge("identify_domains", "generate_items")
+    graph.add_edge("identify_domains", "detect_framework")
+    graph.add_edge("detect_framework", "generate_items")
     graph.add_edge("generate_items", "prioritize")
     graph.add_edge("prioritize", END)
 
