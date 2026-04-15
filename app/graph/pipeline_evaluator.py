@@ -86,7 +86,7 @@ class PipelineEvaluator:
 
     def __init__(self):
         self.llm = ChatOpenAI(
-            model="gpt-4o",
+            model="gpt-4o-mini",
             temperature=0.2,  # 일관된 평가
         )
 

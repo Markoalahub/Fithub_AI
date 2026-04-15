@@ -27,7 +27,7 @@ from app.config import get_settings
 def _get_llm() -> ChatOpenAI:
     settings = get_settings()
     return ChatOpenAI(
-        model="gpt-4o",
+        model="gpt-4o-mini",
         temperature=0.3,
         api_key=settings.openai_api_key,
     )
