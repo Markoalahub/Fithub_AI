@@ -8,7 +8,6 @@ from app.config import init_langsmith
 from app.routers.pipeline import router as legacy_pipeline_router
 from app.routers.pipeline_router import router as pipeline_router
 from app.routers.meeting_router import router as meeting_router
-from app.routers.translation_router import router as translation_router
 
 # Langsmith 초기화
 init_langsmith()
@@ -53,7 +52,6 @@ app.add_middleware(
 app.include_router(legacy_pipeline_router)  # 기존 /pipeline/generate (하위 호환)
 app.include_router(pipeline_router)         # 신규 /pipelines/** CRUD
 app.include_router(meeting_router)          # 신규 /meetings/** CRUD
-app.include_router(translation_router)      # 신규 /meetings/{id}/translate** 번역
 
 
 @app.get("/", tags=["Health"])

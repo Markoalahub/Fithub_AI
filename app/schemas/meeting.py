@@ -5,7 +5,7 @@ Request/Response DTO — ORM ↔ API 경계 분리
 """
 from datetime import datetime
 from pydantic import BaseModel, Field, ConfigDict
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
 
 
 # ──────────────────────────────────────────────
@@ -76,13 +76,6 @@ class MeetingLogResponse(BaseModel):
     created_at: datetime
     attendees: List[MeetingAttendeeResponse] = []
     step_relations: List[MeetingStepRelationResponse] = []
-
-    # 번역 세션 관련 필드 (선택사항)
-    is_translation_session: Optional[bool] = False
-    conversation_type: Optional[str] = "meeting"
-    translation_history: Optional[Dict[str, Any]] = None
-    embedding: Optional[str] = None
-    session_status: Optional[str] = "ongoing"
 
 
 class MeetingLogListResponse(BaseModel):
