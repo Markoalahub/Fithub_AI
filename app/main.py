@@ -52,8 +52,8 @@ app.add_middleware(
 # 라우터 등록
 app.include_router(legacy_pipeline_router)  # 기존 /pipeline/generate (하위 호환)
 app.include_router(pipeline_router)         # 신규 /pipelines/** CRUD
-app.include_router(meeting_router)          # 신규 /meetings/** CRUD
-app.include_router(translation_router)      # 신규 /meetings/{id}/translate** 번역
+app.include_router(translation_router)      # 신규 /meetings/search, /meetings/{id}/translate** 번역
+app.include_router(meeting_router)          # 신규 /meetings/** CRUD (마지막에 등록해야 /{id} 패턴이 후순위)
 
 
 @app.get("/", tags=["Health"])
