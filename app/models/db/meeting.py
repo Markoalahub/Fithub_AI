@@ -9,10 +9,12 @@ DBML 대응:
 from datetime import datetime
 
 from sqlalchemy import (
+    Boolean,
     Column,
     DateTime,
     ForeignKey,
     Integer,
+    JSON,
     String,
     Text,
     func,
@@ -39,6 +41,37 @@ class MeetingLog(Base):
         nullable=True,
         comment="벡터 DB 참조 ID (Pinecone / Chroma 등)",
     )
+
+    # 번역 세션 관련 필드
+    is_translation_session = Column(
+        Boolean,
+        nullable=False,
+        default=False,
+        comment="번역 세션 여부",
+    )
+    conversation_type = Column(
+        String(50),
+        nullable=False,
+        default="meeting",
+        comment="회의 타입: 'meeting' | 'translation'",
+    )
+    translation_history = Column(
+        JSON,
+        nullable=True,
+        comment="번역 대화 이력 JSON (messages 배열 포함)",
+    )
+    embedding = Column(
+        String,
+        nullable=True,
+        comment="벡터 임베딩 (JSON 문자열 또는 pgvector)",
+    )
+    session_status = Column(
+        String(50),
+        nullable=False,
+        default="ongoing",
+        comment="세션 상태: 'ongoing' | 'completed'",
+    )
+
     created_at = Column(
         DateTime,
         nullable=False,

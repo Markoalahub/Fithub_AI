@@ -1,0 +1,112 @@
+framework: react
+name: "React Frontend Development Pipeline"
+description: "React 기반 프론트엔드 개발 파이프라인 (10단계)"
+tech_stack:
+  - React 18+
+  - TypeScript
+  - Vite
+  - Zustand/Redux (상태 관리)
+  - React Router
+  - TailwindCSS/Styled-components
+
+stages:
+  - order: 1
+    title: "환경 설정"
+    description: "패키지 매니저, TS, ESLint/Prettier, alias, 환경변수"
+    key_points:
+      - "npm/yarn/pnpm 선택 및 설정"
+      - "TypeScript 버전 5.x 이상 설정"
+      - "tsconfig.json path alias 설정 (@components, @pages 등)"
+      - "ESLint + Prettier 설정"
+      - ".env, .env.local 환경변수 파일 관리"
+
+  - order: 2
+    title: "폴더 구조"
+    description: "레이어 설계, 도메인/공통 분리 기준"
+    key_points:
+      - "src/pages: 페이지 컴포넌트"
+      - "src/components: 재사용 가능한 컴포넌트 (도메인별 분리)"
+      - "src/hooks: 커스텀 훅"
+      - "src/services: API 통신, 외부 서비스"
+      - "src/store: 전역 상태 관리 (Zustand/Redux)"
+      - "src/types: TypeScript 타입 정의"
+      - "src/utils: 유틸리티 함수"
+
+  - order: 3
+    title: "디자인 시스템"
+    description: "CSS 방식, 디자인 토큰, 공통 UI 컴포넌트"
+    key_points:
+      - "CSS 방식 선택 (Tailwind CSS, Styled-components, SCSS 등)"
+      - "색상, 타이포그래피, 간격 등 디자인 토큰 정의"
+      - "Button, Input, Modal, Card 등 기본 컴포넌트 라이브러리 구축"
+      - "다크모드 지원 (prefers-color-scheme)"
+
+  - order: 4
+    title: "API / 데이터 레이어"
+    description: "API 클라이언트, 상태관리, 에러 핸들링"
+    key_points:
+      - "axios 또는 fetch로 API 클라이언트 구현"
+      - "API 응답/요청 타입 정의 (TypeScript interfaces)"
+      - "Zustand 또는 Redux로 전역 상태 관리"
+      - "Loading, Error, Success 상태 처리"
+      - "React Query/SWR로 데이터 페칭 최적화 (선택)"
+
+  - order: 5
+    title: "인증 / 라우팅"
+    description: "라우터 구조, 인증 플로우, 가드"
+    key_points:
+      - "React Router v6+ 설정"
+      - "라우트 구조 설계 (public, private, admin 등)"
+      - "ProtectedRoute/PrivateRoute 컴포넌트 구현"
+      - "JWT/토큰 기반 인증 플로우"
+      - "로그인, 로그아웃, 토큰 갱신 로직"
+
+  - order: 6
+    title: "컴포넌트 개발"
+    description: "단위 기준, props 타입, 상태 범위"
+    key_points:
+      - "컴포넌트 단위 결정 (도메인별, 기능별)"
+      - "Props 타입 정의 (TypeScript interface/type)"
+      - "useState, useEffect 상태 관리 (로컬 상태)"
+      - "Custom hooks로 로직 추출"
+      - "컴포넌트 조합 패턴 (Composition over Inheritance)"
+
+  - order: 7
+    title: "성능 최적화"
+    description: "코드 스플리팅, 메모이제이션, 이미지 최적화"
+    key_points:
+      - "React.memo, useMemo, useCallback으로 불필요한 렌더링 방지"
+      - "동적 import로 코드 스플리팅 (React.lazy + Suspense)"
+      - "이미지 최적화 (WebP, lazy loading, srcSet)"
+      - "번들 크기 분석 및 최적화 (webpack-bundle-analyzer)"
+      - "성능 모니터링 (Lighthouse, Core Web Vitals)"
+
+  - order: 8
+    title: "테스트"
+    description: "단위/컴포넌트/E2E"
+    key_points:
+      - "Jest + React Testing Library로 컴포넌트 테스트"
+      - "유닛 테스트: 유틸 함수, 커스텀 훅"
+      - "컴포넌트 테스트: 렌더링, 사용자 상호작용"
+      - "E2E 테스트: Playwright/Cypress로 전체 플로우 테스트"
+      - "테스트 커버리지 80% 이상 목표"
+
+  - order: 9
+    title: "확장성 대비"
+    description: "모노레포, i18n, 피처 플래그, 브랜치 전략"
+    key_points:
+      - "모노레포 구조 고려 (Monorepo vs Polyrepo)"
+      - "i18n 라이브러리 (react-i18next) 통합"
+      - "피처 플래그 (Feature Flags) 구현"
+      - "Git 브랜치 전략 (Git Flow, Trunk-based)"
+      - "마이그레이션 전략 및 버전 관리"
+
+  - order: 10
+    title: "배포 / CI·CD"
+    description: "빌드 최적화, 파이프라인, 모니터링"
+    key_points:
+      - "Vite 빌드 최적화 설정"
+      - "GitHub Actions로 자동 빌드/테스트/배포"
+      - "Vercel, Netlify, S3 등 호스팅 설정"
+      - "CDN 캐싱 전략"
+      - "에러 추적 (Sentry) 및 분석 (GA, Mixpanel)"
