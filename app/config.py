@@ -14,7 +14,8 @@ class Settings(BaseSettings):
 
     # Langsmith 설정 (평가 & 트래킹)
     langchain_api_key: str = ""
-    langchain_project: str = "fitai-pipeline-eval"
+    langchain_pipe_project: str = "fitai-pipeline-eval"
+    langchain_meeting_project: str = "fitai-meeting-translation"
     langchain_tracing_enabled: bool = True
 
     class Config:
@@ -28,12 +29,25 @@ def get_settings() -> Settings:
 
 
 def init_langsmith():
-    """Langsmith 트래킹 활성화"""
+    """Langsmith 트래킹 활성화 (파이프라인 + 회의록)"""
     import os
     settings = get_settings()
 
     if settings.langchain_tracing_enabled and settings.langchain_api_key:
         os.environ["LANGCHAIN_TRACING_V2"] = "true"
         os.environ["LANGCHAIN_API_KEY"] = settings.langchain_api_key
-        os.environ["LANGCHAIN_PROJECT"] = settings.langchain_project
-        print("✅ Langsmith 트래킹 활성화됨")
+
+        # 기본값: 파이프라인 프로젝트
+        os.environ["LANGCHAIN_PROJECT"] = settings.langchain_pipe_project
+
+        print("=" * 50)
+        print("✅ LangSmith 트래킹 활성화됨")
+        print("=" * 50)
+        print(f"🔗 API Key: {'설정됨' if settings.langchain_api_key else '미설정'}")
+        print(f"📊 파이프라인 프로젝트: {settings.langchain_pipe_project}")
+        print(f"💬 회의록 프로젝트: {settings.langchain_meeting_project}")
+        print("=" * 50)
+    else:
+        print("⚠️  LangSmith 트래킹 비활성화됨")
+        if not settings.langchain_api_key:
+            print("  └─ LANGCHAIN_API_KEY 미설정")
