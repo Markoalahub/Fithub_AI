@@ -2,10 +2,11 @@
 번역 라우터 — 기획자-개발자 간 AI 번역 API 엔드포인트
 
 엔드포인트:
+- GET  /meetings/search                          임베딩 검색 ⭐ (먼저 정의!)
 - POST /meetings/{id}/translate-to-technical    기획자 → 개발자 번역
 - POST /meetings/{id}/translate-to-planning      개발자 → 기획자 번역
 - POST /meetings/{id}/finalize-translation-session  세션 종료 및 요약
-- GET  /meetings/search                          임베딩 검색
+- GET  /meetings/{id}/translation-history       번역 이력 조회
 """
 
 from typing import Optional
@@ -27,6 +28,68 @@ from app.services import translation_service
 
 router = APIRouter(prefix="/meetings", tags=["translation"])
 
+
+# ────────────────────────────────────────────────────
+# 🔍 검색 (맨 먼저 정의! /{meeting_id}보다 앞)
+# ────────────────────────────────────────────────────
+
+@router.get(
+    "/search",
+    response_model=TranslationSearchResponse,
+    summary="번역 세션 검색",
+    description="임베딩 기반 번역 세션 검색",
+)
+async def search_translations(
+    query: str = Query(..., min_length=2, description="검색 쿼리"),
+    limit: int = Query(10, ge=1, le=100, description="최대 결과 수"),
+    db: AsyncSession = Depends(get_db),
+) -> TranslationSearchResponse:
+    """
+    번역 세션 검색
+
+    임베딩 기반으로 관련 회의를 찾습니다.
+    코사인 유사도를 사용한 의미론적 검색입니다.
+
+    예시: GET /meetings/search?query=사용자%20추천&limit=5
+    """
+    try:
+        import time
+
+        start_time = time.time()
+
+        results = await translation_service.search_translations(
+            db,
+            query,
+            limit,
+        )
+
+        elapsed_ms = (time.time() - start_time) * 1000
+
+        return TranslationSearchResponse(
+            query=query,
+            total_results=len(results),
+            results=[
+                TranslationSearchResult(
+                    meeting_id=r["meeting_id"],
+                    summary=r["summary"],
+                    session_date=translation_service.datetime.fromisoformat(
+                        r["session_date"]
+                    ),
+                    relevance_score=r.get("relevance_score", 0.85),
+                    conversation_type=r["conversation_type"],
+                )
+                for r in results
+            ],
+            search_time_ms=elapsed_ms,
+        )
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ────────────────────────────────────────────────────
+# /{meeting_id}/... 엔드포인트들
+# ────────────────────────────────────────────────────
 
 @router.post(
     "/{meeting_id}/translate-to-technical",
@@ -199,60 +262,6 @@ async def finalize_translation_session(
         raise
     except Exception as e:
         await db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get(
-    "/search",
-    response_model=TranslationSearchResponse,
-    summary="번역 세션 검색",
-    description="임베딩 기반 번역 세션 검색 (향후 pgvector 활용)",
-)
-async def search_translations(
-    query: str = Query(..., min_length=2, description="검색 쿼리"),
-    limit: int = Query(10, ge=1, le=100, description="최대 결과 수"),
-    db: AsyncSession = Depends(get_db),
-) -> TranslationSearchResponse:
-    """
-    번역 세션 검색
-
-    현재는 텍스트 검색으로 구현되어 있으며, 나중에 pgvector를 사용한
-    의미론적 검색(semantic search)으로 업그레이드 예정
-
-    예시: GET /meetings/search?query=사용자%20추천&limit=5
-    """
-    try:
-        import time
-
-        start_time = time.time()
-
-        results = await translation_service.search_translations(
-            db,
-            query,
-            limit,
-        )
-
-        elapsed_ms = (time.time() - start_time) * 1000
-
-        return TranslationSearchResponse(
-            query=query,
-            total_results=len(results),
-            results=[
-                TranslationSearchResult(
-                    meeting_id=r["meeting_id"],
-                    summary=r["summary"],
-                    session_date=translation_service.datetime.fromisoformat(
-                        r["session_date"]
-                    ),
-                    relevance_score=r.get("relevance_score", 0.85),
-                    conversation_type=r["conversation_type"],
-                )
-                for r in results
-            ],
-            search_time_ms=elapsed_ms,
-        )
-
-    except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 

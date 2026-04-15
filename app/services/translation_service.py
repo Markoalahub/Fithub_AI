@@ -12,6 +12,7 @@ Translation Service — 기획자-개발자 간 AI 번역
 import json
 from datetime import datetime
 from typing import Any, Dict, List, Optional
+import math
 
 from sqlalchemy import and_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -46,6 +47,24 @@ def _get_embeddings() -> OpenAIEmbeddings:
         model="text-embedding-3-small",
         api_key=settings.openai_api_key,
     )
+
+
+def _cosine_similarity(vec1: List[float], vec2: List[float]) -> float:
+    """두 벡터 간 코사인 유사도 계산 (0.0 ~ 1.0)"""
+    if not vec1 or not vec2:
+        return 0.0
+
+    # 내적 계산
+    dot_product = sum(a * b for a, b in zip(vec1, vec2))
+
+    # 각 벡터의 크기 계산
+    norm1 = math.sqrt(sum(a * a for a in vec1))
+    norm2 = math.sqrt(sum(b * b for b in vec2))
+
+    if norm1 == 0 or norm2 == 0:
+        return 0.0
+
+    return dot_product / (norm1 * norm2)
 
 
 # ──────────────────────────────────────────────
@@ -332,25 +351,65 @@ async def search_translations(
     db: AsyncSession,
     query: str,
     limit: int = 10,
-    similarity_threshold: float = 0.7,
+    similarity_threshold: float = 0.5,
 ) -> List[Dict[str, Any]]:
     """
     임베딩 기반 번역 세션 검색
 
-    NOTE: 현재는 PostgreSQL pgvector 설정이 필요합니다.
-    프로토타입 단계에서는 기본 텍스트 검색으로 구현.
+    메모리 기반 코사인 유사도로 계산합니다.
     """
     # 쿼리 임베딩 생성
     try:
         query_embedding = await generate_embedding(query)
     except Exception as e:
         print(f"쿼리 임베딩 생성 실패: {e}")
-        # 폴백: 텍스트 기반 검색
-        return await _fallback_text_search(db, query, limit)
+        return []
 
-    # PostgreSQL pgvector 검색 (향후 구현)
-    # 현재는 기본 검색으로 대체
-    return await _fallback_text_search(db, query, limit)
+    # DB에서 모든 completed 번역 세션 조회
+    result = await db.execute(
+        select(MeetingLog)
+        .where(
+            and_(
+                MeetingLog.session_status == "completed",
+                MeetingLog.is_translation_session == True,
+                MeetingLog.embedding != None,  # 임베딩이 있어야 함
+            )
+        )
+        .order_by(MeetingLog.created_at.desc())
+        .limit(100)  # 최대 100개 중에서 유사도 계산
+    )
+
+    meetings = result.scalars().all()
+
+    if not meetings:
+        return []
+
+    # 각 회의의 유사도 계산
+    scored_results = []
+    for meeting in meetings:
+        try:
+            # 저장된 임베딩 파싱
+            meeting_embedding = json.loads(meeting.embedding)
+
+            # 코사인 유사도 계산
+            similarity = _cosine_similarity(query_embedding, meeting_embedding)
+
+            if similarity >= similarity_threshold:
+                scored_results.append({
+                    "meeting_id": meeting.id,
+                    "summary": meeting.summary[:200] if meeting.summary else "요약 없음",
+                    "session_date": meeting.created_at.isoformat(),
+                    "relevance_score": round(similarity, 3),
+                    "conversation_type": meeting.conversation_type,
+                })
+        except (json.JSONDecodeError, TypeError):
+            # 임베딩 파싱 실패 시 스킵
+            continue
+
+    # 유사도 점수로 정렬
+    scored_results.sort(key=lambda x: x["relevance_score"], reverse=True)
+
+    return scored_results[:limit]
 
 
 async def _fallback_text_search(
