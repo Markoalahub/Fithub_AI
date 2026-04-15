@@ -14,7 +14,6 @@ import os
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 import math
-from contextlib import asynccontextmanager
 
 from sqlalchemy import and_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -33,19 +32,19 @@ from app.schemas.translation import (
 )
 
 
-@asynccontextmanager
-async def _meeting_project_context():
-    """회의록 프로젝트로 임시 변경"""
+def _set_meeting_project():
+    """회의록 프로젝트로 변경하고 원래 값 반환"""
     settings = get_settings()
     original_project = os.environ.get("LANGCHAIN_PROJECT")
     os.environ["LANGCHAIN_PROJECT"] = settings.langchain_meeting_project
-    try:
-        yield
-    finally:
-        if original_project:
-            os.environ["LANGCHAIN_PROJECT"] = original_project
-        else:
-            os.environ.pop("LANGCHAIN_PROJECT", None)
+    return original_project
+
+def _restore_project(original_project):
+    """프로젝트 복원"""
+    if original_project:
+        os.environ["LANGCHAIN_PROJECT"] = original_project
+    else:
+        os.environ.pop("LANGCHAIN_PROJECT", None)
 
 
 def _get_llm() -> ChatOpenAI:
@@ -97,7 +96,8 @@ async def translate_to_technical(
     """
     기획자의 질문/요구사항을 개발자가 이해하는 기술적 언어로 번역
     """
-    async with _meeting_project_context():
+    original_project = _set_meeting_project()
+    try:
         llm = _get_llm()
 
         system_prompt = """당신은 시니어 기술 리더입니다. 기획자의 요구사항을 개발자가 명확하게 이해할 수 있도록
@@ -142,6 +142,8 @@ async def translate_to_technical(
             )
 
         return TechnicalTranslation(**result_dict)
+    finally:
+        _restore_project(original_project)
 
 
 async def translate_to_planning(
@@ -151,7 +153,8 @@ async def translate_to_planning(
     """
     개발자의 기술적 설명을 기획자가 이해하는 비즈니스 언어로 번역
     """
-    async with _meeting_project_context():
+    original_project = _set_meeting_project()
+    try:
         llm = _get_llm()
 
         system_prompt = """당신은 기술 이야기를 기획자도 이해할 수 있는 비즈니스 언어로 변환하는 전문가입니다.
@@ -195,6 +198,8 @@ async def translate_to_planning(
             )
 
         return PlanningTranslation(**result_dict)
+    finally:
+        _restore_project(original_project)
 
 
 # ──────────────────────────────────────────────
@@ -257,10 +262,7 @@ async def generate_embedding(text: str) -> List[float]:
     텍스트를 OpenAI embeddings API로 임베딩
     """
     embeddings = _get_embeddings()
-    return await embeddings.aembed_query(
-        text,
-        config=RunnableConfig(run_name="회의-임베딩-생성")
-    )
+    return await embeddings.aembed_query(text)
 
 
 async def finalize_translation_session(
@@ -274,7 +276,8 @@ async def finalize_translation_session(
     2. 임베딩 생성 및 저장
     3. 세션 상태 완료 처리
     """
-    async with _meeting_project_context():
+    original_project = _set_meeting_project()
+    try:
         meeting = await _get_meeting_for_translation(db, meeting_id)
 
         # 1. 전체 대화 기반 요약 생성
@@ -307,6 +310,8 @@ async def finalize_translation_session(
             "session_status": "completed",
             "created_at": datetime.utcnow().isoformat(),
         }
+    finally:
+        _restore_project(original_project)
 
 
 async def _generate_session_summary(
@@ -319,7 +324,8 @@ async def _generate_session_summary(
     if not translation_history or not translation_history.get("messages"):
         return "번역 대화 기록 없음"
 
-    async with _meeting_project_context():
+    original_project = _set_meeting_project()
+    try:
         llm = _get_llm()
 
         # 대화 이력 포맷팅
@@ -368,6 +374,8 @@ async def _generate_session_summary(
         )
 
         return response.content
+    finally:
+        _restore_project(original_project)
 
 
 # ──────────────────────────────────────────────
@@ -386,7 +394,8 @@ async def search_translations(
 
     메모리 기반 코사인 유사도로 계산합니다.
     """
-    async with _meeting_project_context():
+    original_project = _set_meeting_project()
+    try:
         # 쿼리 임베딩 생성
         try:
             query_embedding = await generate_embedding(query)
@@ -439,6 +448,8 @@ async def search_translations(
         scored_results.sort(key=lambda x: x["relevance_score"], reverse=True)
 
         return scored_results[:limit]
+    finally:
+        _restore_project(original_project)
 
 
 async def _fallback_text_search(
