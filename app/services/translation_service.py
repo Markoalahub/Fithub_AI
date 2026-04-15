@@ -10,6 +10,7 @@ Translation Service — 기획자-개발자 간 AI 번역
 """
 
 import json
+import os
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 import math
@@ -20,6 +21,7 @@ from sqlalchemy.orm import selectinload
 from fastapi import HTTPException
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_core.runnables import RunnableConfig
 
 from app.config import get_settings
 from app.models.db.meeting import MeetingLog
@@ -28,6 +30,21 @@ from app.schemas.translation import (
     PlanningTranslation,
     TranslationMessage,
 )
+
+
+def _set_meeting_project():
+    """회의록 프로젝트로 변경하고 원래 값 반환"""
+    settings = get_settings()
+    original_project = os.environ.get("LANGCHAIN_PROJECT")
+    os.environ["LANGCHAIN_PROJECT"] = settings.langchain_meeting_project
+    return original_project
+
+def _restore_project(original_project):
+    """프로젝트 복원"""
+    if original_project:
+        os.environ["LANGCHAIN_PROJECT"] = original_project
+    else:
+        os.environ.pop("LANGCHAIN_PROJECT", None)
 
 
 def _get_llm() -> ChatOpenAI:
@@ -79,9 +96,11 @@ async def translate_to_technical(
     """
     기획자의 질문/요구사항을 개발자가 이해하는 기술적 언어로 번역
     """
-    llm = _get_llm()
+    original_project = _set_meeting_project()
+    try:
+        llm = _get_llm()
 
-    system_prompt = """당신은 시니어 기술 리더입니다. 기획자의 요구사항을 개발자가 명확하게 이해할 수 있도록
+        system_prompt = """당신은 시니어 기술 리더입니다. 기획자의 요구사항을 개발자가 명확하게 이해할 수 있도록
 기술적 언어로 변환합니다.
 
 다음 항목들을 포함하여 JSON 형식으로 응답하세요:
@@ -93,35 +112,38 @@ async def translate_to_technical(
 
 반드시 JSON 형식으로만 응답하세요."""
 
-    user_message = f"""기획자의 요구사항:
+        user_message = f"""기획자의 요구사항:
 {original_statement}"""
 
-    if context:
-        user_message += f"\n\n컨텍스트:\n{context}"
+        if context:
+            user_message += f"\n\n컨텍스트:\n{context}"
 
-    response = llm.invoke(
-        [
-            SystemMessage(content=system_prompt),
-            HumanMessage(content=user_message),
-        ]
-    )
-
-    # JSON 파싱
-    response_text = response.content
-    if "```json" in response_text:
-        response_text = response_text.split("```json")[1].split("```")[0].strip()
-    elif "```" in response_text:
-        response_text = response_text.split("```")[1].split("```")[0].strip()
-
-    try:
-        result_dict = json.loads(response_text)
-    except json.JSONDecodeError:
-        raise HTTPException(
-            status_code=500,
-            detail="번역 결과 JSON 파싱 실패",
+        response = llm.invoke(
+            [
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=user_message),
+            ],
+            config=RunnableConfig(run_name="번역-기획자→개발자")
         )
 
-    return TechnicalTranslation(**result_dict)
+        # JSON 파싱
+        response_text = response.content
+        if "```json" in response_text:
+            response_text = response_text.split("```json")[1].split("```")[0].strip()
+        elif "```" in response_text:
+            response_text = response_text.split("```")[1].split("```")[0].strip()
+
+        try:
+            result_dict = json.loads(response_text)
+        except json.JSONDecodeError:
+            raise HTTPException(
+                status_code=500,
+                detail="번역 결과 JSON 파싱 실패",
+            )
+
+        return TechnicalTranslation(**result_dict)
+    finally:
+        _restore_project(original_project)
 
 
 async def translate_to_planning(
@@ -131,9 +153,11 @@ async def translate_to_planning(
     """
     개발자의 기술적 설명을 기획자가 이해하는 비즈니스 언어로 번역
     """
-    llm = _get_llm()
+    original_project = _set_meeting_project()
+    try:
+        llm = _get_llm()
 
-    system_prompt = """당신은 기술 이야기를 기획자도 이해할 수 있는 비즈니스 언어로 변환하는 전문가입니다.
+        system_prompt = """당신은 기술 이야기를 기획자도 이해할 수 있는 비즈니스 언어로 변환하는 전문가입니다.
 
 다음 항목들을 포함하여 JSON 형식으로 응답하세요:
 1. simple_explanation - 한 문장 요약 (초등학생도 이해할 수 있는 수준)
@@ -144,35 +168,38 @@ async def translate_to_planning(
 
 반드시 JSON 형식으로만 응답하세요."""
 
-    user_message = f"""개발자의 기술적 설명:
+        user_message = f"""개발자의 기술적 설명:
 {developer_statement}"""
 
-    if context:
-        user_message += f"\n\n컨텍스트:\n{context}"
+        if context:
+            user_message += f"\n\n컨텍스트:\n{context}"
 
-    response = llm.invoke(
-        [
-            SystemMessage(content=system_prompt),
-            HumanMessage(content=user_message),
-        ]
-    )
-
-    # JSON 파싱
-    response_text = response.content
-    if "```json" in response_text:
-        response_text = response_text.split("```json")[1].split("```")[0].strip()
-    elif "```" in response_text:
-        response_text = response_text.split("```")[1].split("```")[0].strip()
-
-    try:
-        result_dict = json.loads(response_text)
-    except json.JSONDecodeError:
-        raise HTTPException(
-            status_code=500,
-            detail="번역 결과 JSON 파싱 실패",
+        response = llm.invoke(
+            [
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=user_message),
+            ],
+            config=RunnableConfig(run_name="번역-개발자→기획자")
         )
 
-    return PlanningTranslation(**result_dict)
+        # JSON 파싱
+        response_text = response.content
+        if "```json" in response_text:
+            response_text = response_text.split("```json")[1].split("```")[0].strip()
+        elif "```" in response_text:
+            response_text = response_text.split("```")[1].split("```")[0].strip()
+
+        try:
+            result_dict = json.loads(response_text)
+        except json.JSONDecodeError:
+            raise HTTPException(
+                status_code=500,
+                detail="번역 결과 JSON 파싱 실패",
+            )
+
+        return PlanningTranslation(**result_dict)
+    finally:
+        _restore_project(original_project)
 
 
 # ──────────────────────────────────────────────
@@ -249,38 +276,42 @@ async def finalize_translation_session(
     2. 임베딩 생성 및 저장
     3. 세션 상태 완료 처리
     """
-    meeting = await _get_meeting_for_translation(db, meeting_id)
-
-    # 1. 전체 대화 기반 요약 생성
-    session_summary = await _generate_session_summary(
-        meeting.translation_history,
-        session_note,
-    )
-
-    # 2. 임베딩 생성
+    original_project = _set_meeting_project()
     try:
-        embedding_vector = await generate_embedding(session_summary)
-        # 벡터를 JSON 문자열로 저장
-        meeting.embedding = json.dumps(embedding_vector)
-        embedding_id = f"vec_{meeting_id}_{datetime.utcnow().timestamp()}"
-    except Exception as e:
-        print(f"임베딩 생성 실패: {e}")
-        embedding_id = None
+        meeting = await _get_meeting_for_translation(db, meeting_id)
 
-    # 3. 요약 및 상태 저장
-    meeting.summary = session_summary
-    meeting.session_status = "completed"
+        # 1. 전체 대화 기반 요약 생성
+        session_summary = await _generate_session_summary(
+            meeting.translation_history,
+            session_note,
+        )
 
-    await db.flush()
-    await db.commit()
+        # 2. 임베딩 생성
+        try:
+            embedding_vector = await generate_embedding(session_summary)
+            # 벡터를 JSON 문자열로 저장
+            meeting.embedding = json.dumps(embedding_vector)
+            embedding_id = f"vec_{meeting_id}_{datetime.utcnow().timestamp()}"
+        except Exception as e:
+            print(f"임베딩 생성 실패: {e}")
+            embedding_id = None
 
-    return {
-        "meeting_id": meeting_id,
-        "session_summary": session_summary,
-        "embedding_id": embedding_id,
-        "session_status": "completed",
-        "created_at": datetime.utcnow().isoformat(),
-    }
+        # 3. 요약 및 상태 저장
+        meeting.summary = session_summary
+        meeting.session_status = "completed"
+
+        await db.flush()
+        await db.commit()
+
+        return {
+            "meeting_id": meeting_id,
+            "session_summary": session_summary,
+            "embedding_id": embedding_id,
+            "session_status": "completed",
+            "created_at": datetime.utcnow().isoformat(),
+        }
+    finally:
+        _restore_project(original_project)
 
 
 async def _generate_session_summary(
@@ -293,18 +324,20 @@ async def _generate_session_summary(
     if not translation_history or not translation_history.get("messages"):
         return "번역 대화 기록 없음"
 
-    llm = _get_llm()
+    original_project = _set_meeting_project()
+    try:
+        llm = _get_llm()
 
-    # 대화 이력 포맷팅
-    conversation_text = "\n\n".join(
-        [
-            f"[{msg['role'].upper()}] {msg['original']}\n"
-            f"→ [AI 번역] {json.dumps(msg['ai_translation'], ensure_ascii=False, indent=2)}"
-            for msg in translation_history.get("messages", [])
-        ]
-    )
+        # 대화 이력 포맷팅
+        conversation_text = "\n\n".join(
+            [
+                f"[{msg['role'].upper()}] {msg['original']}\n"
+                f"→ [AI 번역] {json.dumps(msg['ai_translation'], ensure_ascii=False, indent=2)}"
+                for msg in translation_history.get("messages", [])
+            ]
+        )
 
-    system_prompt = """당신은 기획자와 개발자 간 번역 대화를 종합하는 전문가입니다.
+        system_prompt = """당신은 기획자와 개발자 간 번역 대화를 종합하는 전문가입니다.
 
 다음 번역 대화를 종합하여 마크다운 형식의 요약을 작성하세요:
 
@@ -324,7 +357,7 @@ async def _generate_session_summary(
 
 간결하고 명확하게 작성하세요."""
 
-    user_message = f"""번역 대화:
+        user_message = f"""번역 대화:
 
 {conversation_text}
 
@@ -332,14 +365,17 @@ async def _generate_session_summary(
 
 위 대화를 종합하여 요약하세요."""
 
-    response = llm.invoke(
-        [
-            SystemMessage(content=system_prompt),
-            HumanMessage(content=user_message),
-        ]
-    )
+        response = llm.invoke(
+            [
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=user_message),
+            ],
+            config=RunnableConfig(run_name="convert_meeting")
+        )
 
-    return response.content
+        return response.content
+    finally:
+        _restore_project(original_project)
 
 
 # ──────────────────────────────────────────────
@@ -358,58 +394,62 @@ async def search_translations(
 
     메모리 기반 코사인 유사도로 계산합니다.
     """
-    # 쿼리 임베딩 생성
+    original_project = _set_meeting_project()
     try:
-        query_embedding = await generate_embedding(query)
-    except Exception as e:
-        print(f"쿼리 임베딩 생성 실패: {e}")
-        return []
-
-    # DB에서 모든 completed 번역 세션 조회
-    result = await db.execute(
-        select(MeetingLog)
-        .where(
-            and_(
-                MeetingLog.session_status == "completed",
-                MeetingLog.is_translation_session == True,
-                MeetingLog.embedding != None,  # 임베딩이 있어야 함
-            )
-        )
-        .order_by(MeetingLog.created_at.desc())
-        .limit(100)  # 최대 100개 중에서 유사도 계산
-    )
-
-    meetings = result.scalars().all()
-
-    if not meetings:
-        return []
-
-    # 각 회의의 유사도 계산
-    scored_results = []
-    for meeting in meetings:
+        # 쿼리 임베딩 생성
         try:
-            # 저장된 임베딩 파싱
-            meeting_embedding = json.loads(meeting.embedding)
+            query_embedding = await generate_embedding(query)
+        except Exception as e:
+            print(f"쿼리 임베딩 생성 실패: {e}")
+            return []
 
-            # 코사인 유사도 계산
-            similarity = _cosine_similarity(query_embedding, meeting_embedding)
+        # DB에서 모든 completed 번역 세션 조회
+        result = await db.execute(
+            select(MeetingLog)
+            .where(
+                and_(
+                    MeetingLog.session_status == "completed",
+                    MeetingLog.is_translation_session == True,
+                    MeetingLog.embedding != None,  # 임베딩이 있어야 함
+                )
+            )
+            .order_by(MeetingLog.created_at.desc())
+            .limit(100)  # 최대 100개 중에서 유사도 계산
+        )
 
-            if similarity >= similarity_threshold:
-                scored_results.append({
-                    "meeting_id": meeting.id,
-                    "summary": meeting.summary[:200] if meeting.summary else "요약 없음",
-                    "session_date": meeting.created_at.isoformat(),
-                    "relevance_score": round(similarity, 3),
-                    "conversation_type": meeting.conversation_type,
-                })
-        except (json.JSONDecodeError, TypeError):
-            # 임베딩 파싱 실패 시 스킵
-            continue
+        meetings = result.scalars().all()
 
-    # 유사도 점수로 정렬
-    scored_results.sort(key=lambda x: x["relevance_score"], reverse=True)
+        if not meetings:
+            return []
 
-    return scored_results[:limit]
+        # 각 회의의 유사도 계산
+        scored_results = []
+        for meeting in meetings:
+            try:
+                # 저장된 임베딩 파싱
+                meeting_embedding = json.loads(meeting.embedding)
+
+                # 코사인 유사도 계산
+                similarity = _cosine_similarity(query_embedding, meeting_embedding)
+
+                if similarity >= similarity_threshold:
+                    scored_results.append({
+                        "meeting_id": meeting.id,
+                        "summary": meeting.summary[:200] if meeting.summary else "요약 없음",
+                        "session_date": meeting.created_at.isoformat(),
+                        "relevance_score": round(similarity, 3),
+                        "conversation_type": meeting.conversation_type,
+                    })
+            except (json.JSONDecodeError, TypeError):
+                # 임베딩 파싱 실패 시 스킵
+                continue
+
+        # 유사도 점수로 정렬
+        scored_results.sort(key=lambda x: x["relevance_score"], reverse=True)
+
+        return scored_results[:limit]
+    finally:
+        _restore_project(original_project)
 
 
 async def _fallback_text_search(
