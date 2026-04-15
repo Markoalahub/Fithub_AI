@@ -20,7 +20,7 @@ from sqlalchemy.orm import selectinload
 from fastapi import HTTPException
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_core.messages import SystemMessage, HumanMessage
-from langsmith import traceable
+from langchain_core.runnables import RunnableConfig
 
 from app.config import get_settings
 from app.models.db.meeting import MeetingLog
@@ -73,7 +73,6 @@ def _cosine_similarity(vec1: List[float], vec2: List[float]) -> float:
 # ──────────────────────────────────────────────
 
 
-@traceable(run_type="chain", name="번역-기획자→개발자")
 async def translate_to_technical(
     original_statement: str,
     context: Optional[str] = None,
@@ -105,7 +104,8 @@ async def translate_to_technical(
         [
             SystemMessage(content=system_prompt),
             HumanMessage(content=user_message),
-        ]
+        ],
+        config=RunnableConfig(run_name="번역-기획자→개발자")
     )
 
     # JSON 파싱
@@ -126,7 +126,6 @@ async def translate_to_technical(
     return TechnicalTranslation(**result_dict)
 
 
-@traceable(run_type="chain", name="번역-개발자→기획자")
 async def translate_to_planning(
     developer_statement: str,
     context: Optional[str] = None,
@@ -157,7 +156,8 @@ async def translate_to_planning(
         [
             SystemMessage(content=system_prompt),
             HumanMessage(content=user_message),
-        ]
+        ],
+        config=RunnableConfig(run_name="번역-개발자→기획자")
     )
 
     # JSON 파싱
@@ -238,10 +238,12 @@ async def generate_embedding(text: str) -> List[float]:
     텍스트를 OpenAI embeddings API로 임베딩
     """
     embeddings = _get_embeddings()
-    return await embeddings.aembed_query(text)
+    return await embeddings.aembed_query(
+        text,
+        config=RunnableConfig(run_name="회의-임베딩-생성")
+    )
 
 
-@traceable(run_type="chain", name="convert_meeting")
 async def finalize_translation_session(
     db: AsyncSession,
     meeting_id: int,
@@ -287,7 +289,6 @@ async def finalize_translation_session(
     }
 
 
-@traceable(run_type="chain", name="회의-요약-생성")
 async def _generate_session_summary(
     translation_history: Optional[Dict[str, Any]],
     session_note: Optional[str] = None,
@@ -341,7 +342,8 @@ async def _generate_session_summary(
         [
             SystemMessage(content=system_prompt),
             HumanMessage(content=user_message),
-        ]
+        ],
+        config=RunnableConfig(run_name="convert_meeting")
     )
 
     return response.content
@@ -352,7 +354,6 @@ async def _generate_session_summary(
 # ──────────────────────────────────────────────
 
 
-@traceable(run_type="retriever", name="회의-검색-임베딩")
 async def search_translations(
     db: AsyncSession,
     query: str,
