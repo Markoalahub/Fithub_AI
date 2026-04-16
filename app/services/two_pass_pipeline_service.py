@@ -174,11 +174,10 @@ async def builder_pass(direction: PipelineDirection) -> List[PipelineStepCreate]
 반드시 다음 JSON 형식의 배열로만 응답하세요:
 [
   {
-    "title": "구체적 액션 제목",
-    "description": "상세 설명 (여러 줄 가능, \\n으로 구분)",
+    "step_task_description": "구체적 액션 제목과 상세 설명",
+    "step_sequence_number": 1,
     "duration": "예상 기간 (예: '2-3일')",
     "tech_stack": "필요한 기술 (예: 'Spring Boot 3.x, JPA')",
-    "is_completed": false,
     "origin": "ai_generated"
   }
 ]
@@ -191,7 +190,12 @@ async def builder_pass(direction: PipelineDirection) -> List[PipelineStepCreate]
 기술스택 힌트: {direction.tech_hint}
 예상 스텝 개수: {direction.estimated_steps}개
 
-정확히 {direction.estimated_steps}개의 PipelineStepCreate를 JSON 배열로 생성하세요."""
+정확히 {direction.estimated_steps}개의 PipelineStepCreate를 JSON 배열로 생성하세요.
+- step_task_description: 구체적인 작업 상세 내용 (제목 + 설명)
+- step_sequence_number: 1부터 시작하는 순서 번호
+- duration: 예상 소요 시간
+- tech_stack: 필요한 기술스택
+- origin: "ai_generated" 고정"""
 
     response = llm.invoke(
         [
@@ -210,7 +214,13 @@ async def builder_pass(direction: PipelineDirection) -> List[PipelineStepCreate]
 
     # PipelineStepCreate 검증
     try:
-        steps = [PipelineStepCreate(**item) for item in result_list]
+        steps = []
+        for idx, item in enumerate(result_list, start=1):
+            # step_sequence_number 자동 할당
+            item["step_sequence_number"] = idx
+            step = PipelineStepCreate(**item)
+            steps.append(step)
+
         logger.info(
             f"Builder 완료: {direction.category} - {len(steps)}개 스텝 생성"
         )
@@ -295,7 +305,7 @@ async def generate_pipeline_from_pdf(
             project_id=project_id,
             category=direction.category,
             version=1,
-            is_active=True,
+            is_active="Active",
             steps=steps,
         )
         pipelines.append(pipeline)
