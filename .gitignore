@@ -11,3 +11,7 @@ venv/
 
 *.db
 openapi.json
+
+# MSA Architecture Docs
+MSA_DATABASE_ARCHITECTURE.md
+MSA_DBML.dbml
