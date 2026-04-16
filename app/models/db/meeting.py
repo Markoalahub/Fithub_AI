@@ -42,6 +42,18 @@ class MeetingLog(Base):
         comment="벡터 DB 참조 ID (Pinecone / Chroma 등)",
     )
 
+    # 스텝 조정 관련 필드
+    meeting_log_content = Column(
+        Text,
+        nullable=True,
+        comment="(선택 사항) 스텝 조정 시 발생한 회의 기록",
+    )
+    ai_translated_explanation = Column(
+        Text,
+        nullable=True,
+        comment="기술 소통을 돕기 위해 AI가 변환한 설명 텍스트",
+    )
+
     # 번역 세션 관련 필드
     is_translation_session = Column(
         Boolean,

@@ -52,6 +52,12 @@ class MeetingLogCreate(BaseModel):
     """회의록 생성 요청"""
     project_id: int = Field(..., description="Logical FK → Spring DB: projects.id")
     content: str = Field(..., min_length=1, description="회의 원본 내용")
+    meeting_log_content: Optional[str] = Field(
+        None, description="(선택 사항) 스텝 조정 시 발생한 회의 기록"
+    )
+    ai_translated_explanation: Optional[str] = Field(
+        None, description="기술 소통을 돕기 위해 AI가 변환한 설명 텍스트"
+    )
     attendee_user_ids: Optional[List[int]] = Field(
         None, description="참석자 user_id 목록 (Logical FK → Spring DB)"
     )
@@ -62,6 +68,8 @@ class MeetingLogUpdate(BaseModel):
     content: Optional[str] = Field(None, min_length=1)
     summary: Optional[str] = None
     vector_id: Optional[str] = None
+    meeting_log_content: Optional[str] = None
+    ai_translated_explanation: Optional[str] = None
 
 
 class MeetingLogResponse(BaseModel):
@@ -73,6 +81,8 @@ class MeetingLogResponse(BaseModel):
     content: str
     summary: Optional[str] = None
     vector_id: Optional[str] = None
+    meeting_log_content: Optional[str] = None
+    ai_translated_explanation: Optional[str] = None
     created_at: datetime
     attendees: List[MeetingAttendeeResponse] = []
     step_relations: List[MeetingStepRelationResponse] = []
