@@ -1,0 +1,2 @@
+2026-04-26 15:08:07.156 [info] Initialized with 0 existing HTML files
+2026-04-26 15:08:07.156 [info] Watching for HTML files in: file:///Users/myeongsung/.gemini/antigravity/html_artifacts
