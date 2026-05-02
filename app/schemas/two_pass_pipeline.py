@@ -35,5 +35,5 @@ class PlannerResponse(BaseModel):
     directions: List[PipelineDirection] = Field(
         ..., description="도출된 파이프라인 방향성 목록"
     )
-    total_count: int = Field(...., ge=0, description="Direction 총 개수")
+    total_count: int = Field(..., ge=0, description="Direction 총 개수")
     project_summary: str = Field(..., description="PDF에서 추출한 프로젝트 요약")

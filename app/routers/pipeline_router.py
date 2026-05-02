@@ -332,3 +332,69 @@ async def generate_2pass_pipeline(
         pipelines=saved_pipelines,
         total=len(saved_pipelines),
     )
+
+
+# ──────────────────────────────────────────────
+# V3 AI Pipeline Generation (Orchestrator-Worker)
+# ──────────────────────────────────────────────
+
+@router.post(
+    "/generate-v3",
+    response_model=PipelineResponse,
+    summary="V3 AI 파이프라인 생성 (Orchestrator-Worker) → DB 저장",
+    description=(
+        "Pipe.md 기반 원자적 작업(Atomic Task) 분해 로직을 적용한 파이프라인 생성입니다.\n"
+        "Orchestrator(도메인 분해) → Worker(5-200-4 규칙 기반 태스크 생성) → Critic(품질 검증) "
+        "순환 루프를 통해 가장 정밀한 파이프라인을 구축합니다."
+    ),
+)
+async def generate_v3_pipeline(
+    project_id: int = Form(..., description="Spring DB의 project ID (Logical FK)"),
+    requirements: str = Form(..., description="기획자 요구사항 텍스트"),
+    category: Optional[str] = Form(None, description="파이프라인 카테고리 (예: 'BE')"),
+    prd_file: Optional[UploadFile] = File(None, description="PRD PDF 파일 (선택)"),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.graph.pipeline_graph_v3 import pipeline_graph_v3
+    
+    # PDF 바이트 읽기
+    pdf_bytes: Optional[bytes] = None
+    if prd_file is not None:
+        if not prd_file.filename.endswith(".pdf"):
+            raise HTTPException(status_code=400, detail="PDF 파일만 업로드 가능합니다.")
+        pdf_bytes = await prd_file.read()
+
+    # V3 그래프 실행
+    try:
+        result = await pipeline_graph_v3.ainvoke({
+            "prd_context": requirements,
+            "technical_stack": "최적 스택",
+            "todos": [],
+            "completed_steps": [],
+            "feedback": "",
+            "iteration_count": 0,
+            "pdf_bytes": pdf_bytes,
+            "parsed_text": "",
+            "category": category or "BE",
+            "final_pipeline": [],
+        }, config={"recursion_limit": 100})
+    except Exception as e:
+        logger.error(f"V3 파이프라인 생성 실패: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"V3 파이프라인 생성 중 오류: {str(e)}",
+        )
+
+    pipeline_items = result.get("final_pipeline", [])
+    if not pipeline_items:
+        raise HTTPException(
+            status_code=500,
+            detail="AI가 파이프라인 아이템을 생성하지 못했습니다.",
+        )
+
+    # DB 저장 (dict 형식 그대로 전달)
+    pipeline = await pipeline_service.save_ai_pipeline_to_db(
+        db, project_id, pipeline_items, category
+    )
+    return pipeline
+

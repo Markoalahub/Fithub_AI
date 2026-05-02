@@ -38,9 +38,10 @@ async def create_pipeline(
         for step_data in data.steps:
             step = PipelineStep(
                 pipeline_id=pipeline.id,
-                title=step_data.title,
-                description=step_data.description,
-                is_completed=step_data.is_completed,
+                step_task_description=step_data.step_task_description,
+                step_sequence_number=step_data.step_sequence_number,
+                duration=step_data.duration,
+                tech_stack=step_data.tech_stack,
                 origin=step_data.origin,
             )
             db.add(step)
@@ -176,11 +177,11 @@ async def save_ai_pipeline_to_db(
     existing = await db.execute(
         select(Pipeline).where(
             Pipeline.project_id == project_id,
-            Pipeline.is_active == True,  # noqa: E712
+            Pipeline.is_active == "Active",
         )
     )
     for pipeline in existing.scalars().all():
-        pipeline.is_active = False
+        pipeline.is_active = "Inactive"
 
     # 최신 버전 번호 조회
     version_result = await db.execute(
@@ -196,21 +197,19 @@ async def save_ai_pipeline_to_db(
         project_id=project_id,
         category=category,
         version=latest_version + 1,
-        is_active=True,
+        is_active="Active",
         steps=[
             PipelineStepCreate(
-                title=(item.title if hasattr(item, 'title') else item.get('title', '')),
-                description=(
-                    "\n".join(item.details)
-                    if hasattr(item, "details")
-                    else "\n".join(item.get('details', []))
+                step_task_description=(
+                    f"[{item.title if hasattr(item, 'title') else item.get('title', '')}]\n" +
+                    ("\n".join(item.details) if hasattr(item, "details") else "\n".join(item.get('details', [])))
                 ),
+                step_sequence_number=idx + 1,
                 duration=getattr(item, "duration", None) if hasattr(item, "__dict__") else item.get('duration'),
                 tech_stack=getattr(item, "tech_stack", None) if hasattr(item, "__dict__") else item.get('tech_stack'),
-                is_completed=False,
                 origin="ai_generated",
             )
-            for item in pipeline_items
+            for idx, item in enumerate(pipeline_items)
         ],
     )
 
