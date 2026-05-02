@@ -30,6 +30,7 @@ async def create_pipeline(
         category=data.category,
         version=data.version,
         is_active=data.is_active,
+        tech_stack=data.tech_stack,
     )
     db.add(pipeline)
     await db.flush()  # id 확보
@@ -40,9 +41,14 @@ async def create_pipeline(
                 pipeline_id=pipeline.id,
                 step_task_description=step_data.step_task_description,
                 step_sequence_number=step_data.step_sequence_number,
-                duration=step_data.duration,
+                category=step_data.category,
+                priority=step_data.priority,
+                deadline_date=step_data.deadline_date,
+                deadline_time=step_data.deadline_time,
                 tech_stack=step_data.tech_stack,
+                depends_on=step_data.depends_on,
                 origin=step_data.origin,
+                step_details=step_data.step_details,
             )
             db.add(step)
 
@@ -167,6 +173,7 @@ async def save_ai_pipeline_to_db(
     project_id: int,
     pipeline_items: list,
     category: Optional[str] = None,
+    tech_stack: Optional[str] = None,
 ) -> Pipeline:
     """
     LangGraph가 생성한 PipelineItem 리스트를 DB에 저장.
@@ -198,15 +205,18 @@ async def save_ai_pipeline_to_db(
         category=category,
         version=latest_version + 1,
         is_active="Active",
+        tech_stack=tech_stack,
         steps=[
             PipelineStepCreate(
-                step_task_description=(
-                    f"[{item.title if hasattr(item, 'title') else item.get('title', '')}]\n" +
-                    ("\n".join(item.details) if hasattr(item, "details") else "\n".join(item.get('details', [])))
-                ),
+                step_task_description=item.get('title', '') if isinstance(item, dict) else getattr(item, 'title', ''),
+                step_details=item.get('details', []) if isinstance(item, dict) else getattr(item, 'details', []),
+                category=item.get('category', category) if isinstance(item, dict) else getattr(item, 'category', category),
                 step_sequence_number=idx + 1,
-                duration=getattr(item, "duration", None) if hasattr(item, "__dict__") else item.get('duration'),
-                tech_stack=getattr(item, "tech_stack", None) if hasattr(item, "__dict__") else item.get('tech_stack'),
+                priority=getattr(item, "priority", 1) if hasattr(item, "__dict__") else item.get('priority', 1),
+                deadline_date=None,
+                deadline_time=None,
+                tech_stack=item.get('tech_stack', []) if isinstance(item, dict) else getattr(item, 'tech_stack', []),
+                depends_on=item.get('depends_on', []) if isinstance(item, dict) else getattr(item, 'depends_on', []),
                 origin="ai_generated",
             )
             for idx, item in enumerate(pipeline_items)

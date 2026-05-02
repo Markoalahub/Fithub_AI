@@ -14,6 +14,9 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    JSON,
+    Date,
+    Time,
     func,
 )
 from sqlalchemy.orm import relationship
@@ -34,6 +37,7 @@ class Pipeline(Base):
     category = Column(String(100), nullable=True)
     version = Column(Integer, nullable=False, default=1)
     is_active = Column(String(10), nullable=False, default="Active", comment="Active | Inactive")
+    tech_stack = Column(String(200), nullable=True, comment="해당 파이프라인 전체 기술 스택")
 
     # Relationships
     steps = relationship(
@@ -41,6 +45,7 @@ class Pipeline(Base):
         back_populates="pipeline",
         cascade="all, delete-orphan",
         lazy="selectin",
+        order_by="PipelineStep.priority.asc(), PipelineStep.step_sequence_number.asc()",
     )
 
     def __repr__(self) -> str:
@@ -58,8 +63,11 @@ class PipelineStep(Base):
         index=True,
     )
     # 작업 상세 정보
-    step_task_description = Column(Text, nullable=False, comment="해당 스텝에서 수행할 구체적인 작업 상세 내용")
+    step_task_description = Column(Text, nullable=False, comment="해당 스텝의 요약 설명")
+    step_details = Column(JSON, nullable=True, comment="상세 작업 리스트 (JSON Array)")
+    category = Column(String(50), nullable=True, comment="BE | FE | DB | INFRA | AI")
     step_sequence_number = Column(Integer, nullable=False, comment="파이프라인 내 작업 배치 순서")
+    priority = Column(Integer, nullable=False, default=1, comment="1: 핵심 기능, 2: 부가 기능")
 
     # GitHub 상태
     step_github_status = Column(
@@ -89,8 +97,10 @@ class PipelineStep(Base):
     )
 
     # 추가 정보
-    duration = Column(String(100), nullable=True, comment="예상 소요 시간 (예: '2-3일')")
-    tech_stack = Column(String(200), nullable=True, comment="기술스택 (예: 'Spring Boot 3.x')")
+    deadline_date = Column(Date, nullable=True, comment="확정된 마감 날짜")
+    deadline_time = Column(Time, nullable=True, comment="확정된 마감 시간")
+    tech_stack = Column(JSON, nullable=True, comment="관련 기술 스택 (JSON Array, 예: ['Spring', 'JPA'])")
+    depends_on = Column(JSON, nullable=True, comment="선행 작업 sequence_number 리스트 (JSON Array)")
     origin = Column(
         String(50),
         nullable=True,

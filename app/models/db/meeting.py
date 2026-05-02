@@ -150,6 +150,25 @@ class MeetingStepRelation(Base):
         index=True,
     )
 
+    # 승인 정보 (회의 세션 내에서 확정)
+    planner_confirm_yn = Column(
+        String(10),
+        nullable=False,
+        default="Pending",
+        comment="기획자 승인 여부: Pending | Approved",
+    )
+    developer_confirm_yn = Column(
+        String(10),
+        nullable=False,
+        default="Pending",
+        comment="개발자 승인 여부: Pending | Approved",
+    )
+    confirmed_at = Column(
+        DateTime,
+        nullable=True,
+        comment="해당 회의에서 승인이 완료된 시각",
+    )
+
     # Relationships
     meeting_log = relationship("MeetingLog", back_populates="step_relations")
     pipeline_step = relationship(

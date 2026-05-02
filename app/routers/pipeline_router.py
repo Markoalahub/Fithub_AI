@@ -33,6 +33,7 @@ from app.schemas.pipeline import (
     PipelineStepCreate,
     PipelineStepUpdate,
     PipelineStepResponse,
+    PipelineV3Response,
 )
 from app.services import pipeline_service
 from app.services import two_pass_pipeline_service
@@ -340,7 +341,7 @@ async def generate_2pass_pipeline(
 
 @router.post(
     "/generate-v3",
-    response_model=PipelineResponse,
+    response_model=PipelineV3Response,
     summary="V3 AI 파이프라인 생성 (Orchestrator-Worker) → DB 저장",
     description=(
         "Pipe.md 기반 원자적 작업(Atomic Task) 분해 로직을 적용한 파이프라인 생성입니다.\n"
@@ -351,24 +352,27 @@ async def generate_2pass_pipeline(
 async def generate_v3_pipeline(
     project_id: int = Form(..., description="Spring DB의 project ID (Logical FK)"),
     requirements: str = Form(..., description="기획자 요구사항 텍스트"),
-    category: Optional[str] = Form(None, description="파이프라인 카테고리 (예: 'BE')"),
-    prd_file: Optional[UploadFile] = File(None, description="PRD PDF 파일 (선택)"),
+    categories: Optional[str] = Form(None, alias="categories", description="파이프라인 카테고리 (예: 'BE')"),
+    tech_stack: Optional[str] = Form(None, description="사용할 기술 스택 (예: 'Spring Boot, JPA')"),
+    file: Optional[UploadFile] = File(None, description="PRD PDF 파일 (선택)"),
     db: AsyncSession = Depends(get_db),
 ):
     from app.graph.pipeline_graph_v3 import pipeline_graph_v3
     
     # PDF 바이트 읽기
     pdf_bytes: Optional[bytes] = None
-    if prd_file is not None:
-        if not prd_file.filename.endswith(".pdf"):
+    if file is not None:
+        if not file.filename.endswith(".pdf"):
             raise HTTPException(status_code=400, detail="PDF 파일만 업로드 가능합니다.")
-        pdf_bytes = await prd_file.read()
+        pdf_bytes = await file.read()
+
+    category = categories  # 내부 변수명 통일
 
     # V3 그래프 실행
     try:
         result = await pipeline_graph_v3.ainvoke({
             "prd_context": requirements,
-            "technical_stack": "최적 스택",
+            "technical_stack": tech_stack or "최적 스택",
             "todos": [],
             "completed_steps": [],
             "feedback": "",
@@ -377,7 +381,7 @@ async def generate_v3_pipeline(
             "parsed_text": "",
             "category": category or "BE",
             "final_pipeline": [],
-        }, config={"recursion_limit": 100})
+        }, config={"recursion_limit": 1000})
     except Exception as e:
         logger.error(f"V3 파이프라인 생성 실패: {e}")
         raise HTTPException(
@@ -394,7 +398,7 @@ async def generate_v3_pipeline(
 
     # DB 저장 (dict 형식 그대로 전달)
     pipeline = await pipeline_service.save_ai_pipeline_to_db(
-        db, project_id, pipeline_items, category
+        db, project_id, pipeline_items, category, tech_stack
     )
     return pipeline
 
