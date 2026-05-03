@@ -212,7 +212,7 @@ async def save_ai_pipeline_to_db(
                 step_details=item.get('details', []) if isinstance(item, dict) else getattr(item, 'details', []),
                 category=item.get('category', category) if isinstance(item, dict) else getattr(item, 'category', category),
                 step_sequence_number=idx + 1,
-                priority=getattr(item, "priority", 1) if hasattr(item, "__dict__") else item.get('priority', 1),
+                priority=max(1, min(2, getattr(item, "priority", 1) if hasattr(item, "__dict__") else item.get('priority', 1))),
                 deadline_date=None,
                 deadline_time=None,
                 tech_stack=item.get('tech_stack', []) if isinstance(item, dict) else getattr(item, 'tech_stack', []),

@@ -45,7 +45,7 @@ def _get_llm(model_name="gpt-4o") -> ChatOpenAI:
     settings = get_settings()
     return ChatOpenAI(
         model=model_name,
-        temperature=0.2,
+        temperature=0.1,
         api_key=settings.openai_api_key,
     )
 
@@ -105,208 +105,172 @@ def parse_document(state: AgentState) -> dict:
 
 def domain_decomposer(state: AgentState) -> dict:
     llm = _get_llm("gpt-4o")
-    parsed_text = state.get("parsed_text", "")
-    category = state.get("category", "BE")
     tech_stack = state.get("technical_stack", "최적 스택")
-    
+    category = state.get("category", "전체")
+    context = state.get("prd_context", "")
+    parsed_text = state.get("parsed_text", "")
+
     system_prompt = (
-        f"당신은 {tech_stack} 전문 소프트웨어 아키텍트입니다.\n"
-        f"## 미션: 아래 '제공된 내용'만을 근거로 하여 {category} 개발 파이프라인을 기획하라.\n\n"
-        "## 절대 규칙 (위반 시 시스템 오류):\n"
-        f"1. **근거 없는 생성 금지**: 제공된 PRD/요구사항 문서에 명시되지 않은 기능(예: 문서에 없는데 상품, 주문, 추천 등 추가)을 임의로 생성하는 것을 엄격히 금지합니다. 오직 문서 내의 정보만 사용하세요.\n"
-        f"2. **기술 스택 고정**: 반드시 사용자가 지정한 기술 스택 `{tech_stack}` 내에서만 설계하세요.\n"
-        f"3. **직군 제한**: 반드시 '{category}' 직군이 수행해야 할 작업만 도출하세요.\n"
-        "4. **의존성**: 동일 카테고리 내 선행 작업 id를 명시하세요.\n\n"
-        "반드시 아래 JSON 형식으로만 응답하세요 (구조만 따를 것):\n"
-        '[\n'
-        f'  {{"id": 1, "category": "{category}", "feature": "문서 내 기능명", "goal": "구체적 목표", "depends_on": []}}\n'
-        ']'
+        "🚀 FitHub AI V4: 직군별 파이프라인 생성 엔진\n"
+        f"당신은 입력된 {category} 분야의 15년 경력 수석 아키텍트입니다. 당신의 목표는 제공된 {tech_stack}을 활용하여, "
+        "PRD의 요구사항을 0.5~8시간 단위의 원자적(Atomic) GitHub 이슈로 분해하는 것입니다.\n\n"
+        "## 🛠️ 1. 직군별 개발 시퀀스 (The Inside-Out Rule)\n"
+        f"입력받은 category({category})에 따라 아래의 상향식 개발 순서를 엄격히 준수하십시오. 하위 레이어가 정의되지 않은 상태에서 상위 레이어를 먼저 계획하는 것은 금지됩니다.\n\n"
+        "**CASE A: Backend (BE) 아키텍처 규칙**\n"
+        "- L1: Persistence Foundation: DB 스키마 설계 및 JPA Entity 매핑.\n"
+        "- L2: Data Access: JpaRepository 인터페이스 및 Query 로직 구현.\n"
+        "- L3: Business Logic: @Service 레이어 알고리즘 및 트랜잭션 처리. (Controller 언급 금지)\n"
+        "- L4: API Interface: @RestController, DTO 정의, 유효성 검증(@Valid).\n\n"
+        "**CASE B: Frontend (FE) 아키텍처 규칙**\n"
+        "- L1: UI Component: 디자인 시스템 기반 원자적 컴포넌트(Atoms/Molecules) 및 CSS 스타일링.\n"
+        "- L2: Client State: Custom Hooks를 활용한 UI 상태 관리 로직 설계.\n"
+        "- L3: API Client: Axios/Fetch 기반의 API 서비스 통신 계층 구현. (목업 데이터 포함)\n"
+        "- L4: Data Binding: 실제 API 연동 및 컴포넌트 데이터 바인딩 통합.\n\n"
+        "## 📐 2. 의존성 및 중복 방지 로직 (Guardrails)\n"
+        f"- **직군 격리**: category가 '{category}'입니다. 이 직군에 해당하지 않는 작업(예: BE인데 UI 컴포넌트, FE인데 Repository/Controller)은 절대 생성하지 마십시오.\n"
+        "- **의존성 체인**: 1번 스텝을 제외한 모든 스텝은 반드시 현재 직군 내의 직전 단계 번호를 depends_on에 포함해야 합니다.\n"
+        "- **루핑 및 중복 금지**: 동일한 기술 스택 초기화나 중복된 기능을 여러 번 생성하지 마십시오. 전체 시퀀스가 끝나면 즉시 중단하십시오.\n"
+        "- **할루시네이션 차단**: 제공된 <PRD_CONTENT>에 명시되지 않은 필드나 기능을 임의로 추가하지 마십시오.\n\n"
+        "## 🧠 3. 이슈 생성 알고리즘 (MoT & INVEST)\n"
+        "- **Atomic**: 숙련된 개발자가 8시간 이내에 PR(Pull Request)을 날릴 수 있는 규모인가?\n"
+        "- **Testable**: 상세 내용 마지막에 \"성공 조건: [정량적 검증 기준]\"을 반드시 포함하십시오.\n"
+        "  - BE 예시: \"성공 조건: JpaRepository의 특정 메서드에 대한 JUnit 테스트 통과\"\n"
+        "  - FE 예시: \"성공 조건: Storybook에서 컴포넌트 렌더링 및 인터렉션 확인\"\n\n"
+        "## 📝 4. 출력 형식 (Strict JSON)\n"
+        "결과물은 반드시 아래 구조의 JSON 배열이어야 하며, 다른 설명 텍스트는 일절 배제하십시오.\n"
+        "[\n"
+        "  {\n"
+        f"    \"step_task_description\": \"[{category}] 단계명 - 구체적 이슈 제목\",\n"
+        f"    \"step_details\": [\"작업 내용 1\", \"작업 내용 2\", \"성공 조건: [정량적 검증 기준]\"],\n"
+        f"    \"category\": \"{category}\",\n"
+        "    \"priority\": 1,\n"
+        f"    \"tech_stack\": [\"{tech_stack} 기반 세부 라이브러리\"],\n"
+        "    \"depends_on\": [이전 sequence_number],\n"
+        "    \"step_sequence_number\": 1\n"
+        "  }\n"
+        "]\n"
     )
-    
+
+    user_message = (
+        f"<PRD_CONTENT>\n{parsed_text}\n</PRD_CONTENT>\n\n"
+        f"<TECH_STACK>{tech_stack}</TECH_STACK>\n\n"
+        f"<CONTEXT>{context}</CONTEXT>"
+    )
+
     messages = [
         SystemMessage(content=system_prompt),
-        HumanMessage(content=f"요구사항 및 PRD 내용: {parsed_text}")
+        HumanMessage(content=user_message)
     ]
-    
+
     response = llm.invoke(messages)
     try:
         content = response.content.strip()
-        # JSON 블록 추출 로직 강화 (정규표현식 대용으로 더 튼튼하게)
-        start_idx = content.find("[")
-        end_idx = content.rfind("]") + 1
-        if start_idx != -1 and end_idx != 0:
-            json_str = content[start_idx:end_idx]
-            todos = json.loads(json_str)
+        if content.startswith("{"):
+            parsed = json.loads(content)
+            steps = parsed.get("steps", [parsed])
         else:
-            todos = json.loads(content)
-            
-        if not isinstance(todos, list):
-            todos = [todos]
+            start_idx = content.find("[")
+            end_idx = content.rfind("]") + 1
+            if start_idx != -1 and end_idx > 0:
+                steps = json.loads(content[start_idx:end_idx])
+            else:
+                steps = json.loads(content)
+        
+        if not isinstance(steps, list): steps = [steps]
     except Exception as e:
-        logger.error(f"V3 Decomposer JSON 파싱 실패: {e}")
-        logger.error(f"원본 응답: {response.content}")
-        # 실패 시 최소한의 작업이라도 수행하도록 폴백 유지하되 제목 수정
-        todos = [{"id": 1, "category": category, "feature": "기획 분석", "goal": "요구사항에 따른 초기 개발 방향 설정", "depends_on": []}]
+        logger.error(f"[decomposer] JSON 파싱 실패: {e}")
+        steps = []
+
+    return {"completed_steps": steps, "todos": [], "iteration_count": 0}
+
+def quality_validator(state: AgentState) -> dict:
+    steps = state.get("completed_steps", [])
+    if not steps: return {"completed_steps": []}
+
+    valid_steps = []
+    seen_titles = set()
+    banned_keywords = ["Thymeleaf", "JSP", "Freemarker", "MVC", "Server Side Rendering", "SSR"]
+    
+    for step in steps:
+        title = step.get("step_task_description", "") or step.get("title", "")
+        details = step.get("step_details", []) or step.get("details", [])
+        stack = step.get("tech_stack", [])
+        category = step.get("category", "BE")
+        seq = step.get("step_sequence_number", 0)
+        deps = step.get("depends_on", [])
+
+        # 1. 직군 간 교차 오염 검사 (Cross-contamination Check)
+        content_str = str(title).lower() + " " + " ".join([str(d).lower() for d in details])
+        if category == "FE":
+            if any(k in content_str for k in ["controller", "repository", "jpa", "entity", "spring"]):
+                logger.warning(f"[validator] FE 카테고리에 BE 작업 혼입 감지(Reject): {title}")
+                continue
+        elif category in ["BE", "DB"]:
+            if any(k in content_str for k in ["react", "vue", "css", "component", "dom "]):
+                logger.warning(f"[validator] BE 카테고리에 FE 작업 혼입 감지(Reject): {title}")
+                continue
+
+        # 2. SSR 금지 검사
+        if any(any(bk.lower() in str(s).lower() for bk in banned_keywords) for s in [title] + stack):
+            logger.warning(f"[validator] SSR 기술 감지(Reject): {title}")
+            continue
+
+        # 3. 루핑(중복) 검사
+        if title in seen_titles:
+            logger.warning(f"[validator] 중복 작업 감지(Reject): {title}")
+            continue
+        seen_titles.add(title)
+
+        # 4. 성공 조건 포함 검사
+        if not any("성공 조건" in str(d) for d in details):
+            logger.warning(f"[validator] 성공 조건 누락: {title}")
+            # 자동으로 직군에 맞는 기본 성공 조건 추가
+            if category == "FE":
+                details.append("성공 조건: UI 렌더링 및 콘솔 에러 없음 확인")
+            else:
+                details.append("성공 조건: 빌드 및 단위 테스트 통과")
+            step["step_details"] = details
+
+        # 5. BE 의존성 검사 (1번 제외)
+        if category in ["BE", "DB"] and seq > 1 and not deps:
+            logger.warning(f"[validator] BE 작업 의존성 누락: {title}")
+            # 직전 번호로 자동 연결 시도
+            step["depends_on"] = [seq - 1]
+
+        # 6. priority 보정
+        step["priority"] = max(1, min(2, step.get("priority", 1)))
         
-    return {"todos": todos, "completed_steps": [], "iteration_count": 0}
+        valid_steps.append(step)
 
-
-# ──────────────────────────────────────────────
-# Node 3: atomic_step_builder (Worker)
-# ──────────────────────────────────────────────
-
-def atomic_step_builder(state: AgentState) -> dict:
-    llm = _get_llm("gpt-4o-mini")
-    todos = state.get("todos", [])
-    if not todos:
-        return {}
-
-    current_todo = todos[0]
-    category = state.get("category", "BE")
-    tech_stack = state.get("technical_stack", "")
-    feedback = state.get("feedback", "")
-    
-    system_prompt = (
-        f"당신은 {tech_stack} 전문 {category} 개발자입니다.\n"
-        f"## 미션: 전달받은 '{current_todo.get('feature')}' 기능을 상세 구현 스텝으로 변환하라.\n\n"
-        "## 절대 규칙:\n"
-        f"1. **기술 스택 제한**: 오직 `{tech_stack}` 관련 기술만 상세 작업(details)에 포함하세요.\n"
-        f"2. **내용 일치**: 전달받은 기능의 목표({current_todo.get('goal')})를 벗어난 작업을 추가하지 마세요.\n"
-        f"3. **카테고리**: [{category}]를 제목 앞에 붙이세요.\n"
-        f"4. **태그**: tech_stack 배열에는 `{tech_stack}` 중 실제 사용된 기술 명칭을 넣으세요.\n\n"
-        "반드시 아래 JSON 형식으로만 응답하세요:\n"
-        '{\n'
-        f'  "title": "[{category}] 기능명 - 상세작업",\n'
-        f'  "category": "{category}",\n'
-        '  "priority": 1,\n'
-        '  "tech_stack": ["사용기술1", "사용기술2"],\n'
-        '  "details": ["문서에 근거한 구체적 작업 1", "문서에 근거한 구체적 작업 2"],\n'
-        '  "depends_on": []\n'
-        '}'
-    )
-    
-    if feedback:
-        system_prompt += f"\n\n이전 피드백 반영 사항: {feedback}"
-
-    messages = [
-        SystemMessage(content=system_prompt),
-        HumanMessage(content=f"처리할 기능: {json.dumps(current_todo, ensure_ascii=False)}")
-    ]
-    
-    response = llm.invoke(messages)
-    try:
-        content = response.content.strip()
-        if "```json" in content:
-            content = content.split("```json")[1].split("```")[0].strip()
-        step_draft = json.loads(content)
-    except:
-        step_draft = {"title": f"[{current_todo.get('feature')}] - {current_todo.get('goal')}", "estimated_hours": 4, "details": []}
-
-    return {"current_step_draft": step_draft}
-
-
-# ──────────────────────────────────────────────
-# Node 4: quality_critic (Reviewer)
-# ──────────────────────────────────────────────
-
-def quality_critic(state: AgentState) -> dict:
-    draft = state.get("current_step_draft")
-    iteration = state.get("iteration_count", 0)
-    
-    if not draft:
-        return {"feedback": "Draft missing"}
-
-    title = draft.get("title", "")
-    hours = draft.get("estimated_hours", 0)
-    
-    reasons = []
-    
-    # 1. 5-200-4 시간 검사
-    if hours > 4:
-        reasons.append(f"소요 시간({hours}h)이 4시간을 초과함")
-        
-    # 2. 명명 규칙 검사
-    if not (title.startswith("[") and "] -" in title):
-        reasons.append("명명 규칙 '[기능명] - 액션명'을 준수하지 않음")
-
-    # 3. 수직적 슬라이스 여부 검사 (파편화 방지)
-    fragment_keywords = ["Entity 정의", "Repository 작성", "Controller만", "DTO 생성"]
-    for kw in fragment_keywords:
-        if kw in title:
-            reasons.append(f"단순 레이어 작업('{kw}')으로 파편화됨. 수직적 슬라이스로 통합 필요")
-
-    # 4. 상세 작업 개수 검사 (너무 많으면 단위가 큰 것임)
-    details = draft.get("details", [])
-    if len(details) > 6:
-        reasons.append(f"상세 작업이 {len(details)}개로 너무 많습니다. 단위를 더 쪼개세요.")
-    if len(details) < 2:
-        reasons.append("상세 작업이 너무 부족합니다. 구체적인 구현 단계를 포함하세요.")
-
-    if iteration >= 3:
-        return {
-            "todos": state.get("todos", [])[1:],
-            "completed_steps": [draft],
-            "feedback": "",
-            "iteration_count": 0,
-            "current_step_draft": None
-        }
-
-    if not reasons:
-        return {
-            "todos": state.get("todos", [])[1:],
-            "completed_steps": [draft],
-            "feedback": "",
-            "iteration_count": 0,
-            "current_step_draft": None
-        }
-    else:
-        return {
-            "feedback": " | ".join(reasons),
-            "iteration_count": iteration + 1
-        }
-
-
-# ──────────────────────────────────────────────
-# Node 5: Finalize & Edge
-# ──────────────────────────────────────────────
-
-def route_after_critic(state: AgentState) -> str:
-    if state.get("feedback"):
-        return "atomic_step_builder"
-    return "finalize" if not state.get("todos") else "atomic_step_builder"
+    return {"completed_steps": valid_steps}
 
 def finalize(state: AgentState) -> dict:
     steps = state.get("completed_steps", [])
     category = state.get("category", "BE")
-    
     final_pipeline = []
     for idx, step in enumerate(steps):
         final_pipeline.append({
-            "title": step.get("title", f"Step {idx+1}"),
+            "title": step.get("step_task_description", "") or step.get("title", f"Step {idx+1}"),
             "category": step.get("category", category),
             "priority": step.get("priority", 1),
             "tech_stack": step.get("tech_stack", []),
             "depends_on": step.get("depends_on", []),
-            "details": step.get("details", [])
+            "details": step.get("step_details", []) or step.get("details", [])
         })
-        
     return {"final_pipeline": final_pipeline}
-
 
 def build_pipeline_graph_v3() -> StateGraph:
     graph = StateGraph(AgentState)
     graph.add_node("parse_document", parse_document)
     graph.add_node("domain_decomposer", domain_decomposer)
-    graph.add_node("atomic_step_builder", atomic_step_builder)
-    graph.add_node("quality_critic", quality_critic)
+    graph.add_node("quality_validator", quality_validator)
     graph.add_node("finalize", finalize)
-
     graph.set_entry_point("parse_document")
     graph.add_edge("parse_document", "domain_decomposer")
-    graph.add_edge("domain_decomposer", "atomic_step_builder")
-    graph.add_edge("atomic_step_builder", "quality_critic")
-    graph.add_conditional_edges("quality_critic", route_after_critic, {"atomic_step_builder": "atomic_step_builder", "finalize": "finalize"})
+    graph.add_edge("domain_decomposer", "quality_validator")
+    graph.add_edge("quality_validator", "finalize")
     graph.add_edge("finalize", END)
     return graph.compile()
 
 pipeline_graph_v3 = build_pipeline_graph_v3()
+
