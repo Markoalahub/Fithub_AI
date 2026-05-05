@@ -11,14 +11,16 @@ from app.config import get_settings
 logger = logging.getLogger(__name__)
 
 class AgentState(TypedDict):
-    prd_context: str
+    prd_context: str            # 프론트엔드 전달 원본 (인터뷰 포함)
     technical_stack: str
     todos: List[dict]
     completed_steps: List[dict]
     feedback: str
     iteration_count: int
     pdf_bytes: Optional[bytes]
-    parsed_text: str
+    interview_summary: str      # 정제된 인터뷰 요약
+    pdf_content: str            # PDF 추출 원본
+    refined_requirements: str    # 최종 통합 설계 가이드
     category: str
     current_step_draft: Optional[dict]
     final_pipeline: List[dict]
@@ -39,30 +41,66 @@ def parse_document(state: AgentState) -> dict:
     pdf_bytes = state.get("pdf_bytes")
     requirements = state.get("prd_context", "")
     
-    if not pdf_bytes:
-        return {"parsed_text": requirements, "pdf_bytes": None}
+    # 1. 인터뷰/텍스트 요구사항 분리 및 추출
+    # 프론트엔드에서 🚀 [Ouroboros 사전 인터뷰 최종 요약] 태그를 사용함
+    interview_part = ""
+    if "🚀 [Ouroboros 사전 인터뷰 최종 요약]" in requirements:
+        parts = requirements.split("🚀 [Ouroboros 사전 인터뷰 최종 요약]")
+        interview_part = parts[1].split("📝 [기존 요구사항]")[0].strip()
+    
+    # 2. PDF 파싱
+    pdf_content = ""
+    if pdf_bytes:
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+                tmp.write(pdf_bytes)
+                tmp_path = tmp.name
+            
+            converter = DocumentConverter()
+            result = converter.convert(tmp_path)
+            pdf_content = result.document.export_to_markdown()
+            os.unlink(tmp_path)
+            logger.info(f"[parse_document] PDF 파싱 성공: {len(pdf_content)} 자")
+        except Exception as e:
+            logger.error(f"[parse_document] PDF 파싱 실패: {e}")
 
-    try:
-        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
-            tmp.write(pdf_bytes)
-            tmp_path = tmp.name
-        
-        converter = DocumentConverter()
-        result = converter.convert(tmp_path)
-        parsed_text = result.document.export_to_markdown()
-        os.unlink(tmp_path)
-    except Exception as e:
-        logger.error(f"[parse_document] PDF 파싱 실패: {e}")
-        parsed_text = ""
+    return {
+        "interview_summary": interview_part, 
+        "pdf_content": pdf_content,
+        "pdf_bytes": None # 메모리 절약을 위해 바이너리 제거
+    }
 
-    full_context = f"사용자 요구사항:\n{requirements}\n\n[핵심 데이터] PRD 상세 내용:\n{parsed_text if parsed_text else '추출된 텍스트가 없습니다.'}"
-    return {"parsed_text": full_context, "pdf_bytes": None}
+def requirement_refiner(state: AgentState) -> dict:
+    """방대한 인터뷰와 PDF 내용을 통합하여 압축된 설계 가이드를 생성함"""
+    llm = _get_llm("gpt-4o-mini") # 요약은 빠른 모델 사용
+    interview = state.get("interview_summary", "")
+    pdf = state.get("pdf_content", "")
+    original_req = state.get("prd_context", "")
+
+    system_prompt = (
+        "당신은 요구사항 분석 전문가입니다. 제공된 인터뷰 내역과 PDF 문서를 통합하여 "
+        "개발자가 파이프라인을 설계할 때 참고할 '핵심 설계 가이드'를 작성하세요.\n"
+        "1. 인터뷰 내용은 기획자와의 최종 합의사항이므로 PDF 내용보다 우선합니다.\n"
+        "2. 중복된 내용은 제거하고, 기술적 제약사항과 핵심 비즈니스 로직 위주로 요약하세요.\n"
+        "3. 내용이 너무 길면 핵심만 리스트 형태로 압축하세요."
+    )
+    
+    user_message = (
+        f"### [최종 인터뷰 합의사항]\n{interview if interview else '내역 없음'}\n\n"
+        f"### [원본 PDF 로직]\n{pdf if pdf else '내역 없음'}\n\n"
+        f"### [기타 요구사항]\n{original_req}"
+    )
+    
+    messages = [SystemMessage(content=system_prompt), HumanMessage(content=user_message)]
+    response = llm.invoke(messages)
+    
+    return {"refined_requirements": response.content}
 
 def domain_decomposer(state: AgentState) -> dict:
     llm = _get_llm("gpt-4o")
     tech_stack = state.get("technical_stack", "Spring Boot, JPA")
     category = state.get("category", "BE")
-    parsed_text = state.get("parsed_text", "")
+    refined_requirements = state.get("refined_requirements", "")
 
     scope_constraint = ""
     if category == "BE":
@@ -83,12 +121,16 @@ def domain_decomposer(state: AgentState) -> dict:
         f"## ⚠️ 직군 격리 지침\n{scope_constraint}\n\n"
         "## 💡 설계 원칙: Atomic Task 분해 (매우 중요)\n"
         "1. 제공된 기획(PRD) 및 요구사항을 기반으로 시스템을 구축하기 위한 모든 작업 단위를 도출하십시오.\n"
-        "2. 파이프라인이 너무 뭉뚱그려져 있으면(예: '인증 시스템 개발' 단 하나) 절대 안 됩니다. \n"
-        "3. 반드시 원자적(Atomic) 수준으로 쪼개십시오 (예: 'DB 스키마 설계', 'OAuth 엔드포인트 구현', 'JWT 검증 필터 개발' 등).\n"
-        "4. 최소 7개 이상의 매우 구체적이고 실무적인 스텝으로 분리하여 순차적으로 나열하십시오.\n"
-        "5. **[매우 중요]** 각 스텝의 `details` 배열에 들어가는 항목들은 각각 **독립적인 하나의 GitHub 이슈(Issue)** 로 발행될 예정입니다.\n"
+        "2. **[정보 통합 지침]**: 제공된 정보는 두 가지 섹션으로 구성됩니다.\n"
+        "   - `### [중요] 1. 사용자 최종 합의 및 인터뷰 요약`: 기획자와의 최신 합의 사항입니다. PRD의 모호한 부분을 이 내용이 결정합니다.\n"
+        "   - `### [상세 가이드] 2. PRD 문서 분석 결과`: 시스템의 전체적인 로직과 비즈니스 규칙이 담긴 근간입니다.\n"
+        "   **반드시** PRD의 상세 로직을 기반으로 하되, 인터뷰에서 변경되거나 구체화된 사양을 적용하여 설계하십시오. 어느 한쪽만 반영해서는 안 됩니다.\n"
+        "3. 파이프라인이 너무 뭉뚱그려져 있으면(예: '인증 시스템 개발' 단 하나) 절대 안 됩니다. \n"
+        "4. 반드시 원자적(Atomic) 수준으로 쪼개십시오 (예: 'DB 스키마 설계', 'OAuth 엔드포인트 구현', 'JWT 검증 필터 개발' 등).\n"
+        "5. 최소 7개 이상의 매우 구체적이고 실무적인 스텝으로 분리하여 순차적으로 나열하십시오.\n"
+        "6. **[매우 중요]** 각 스텝의 `details` 배열에 들어가는 항목들은 각각 **독립적인 하나의 GitHub 이슈(Issue)** 로 발행될 예정입니다.\n"
         "   따라서 단순한 설명이나 서술어가 아니라, 개발자가 즉시 티켓으로 할당받아 작업할 수 있는 '명확하고 구체적인 태스크(Task)' 형태로 작성하십시오.\n"
-        "   (예: '사용자 로그인 기능 구현' (X) -> 'JWT 기반 OAuth2 로그인 인증 API 엔드포인트 구현 및 토큰 발급 로직 작성' (O))\n\n"
+        "   (예: '사용자 로그인 기능 구현' (X) -> 'JWT 기반 OAuth2 로그인 인증 API 엔드포인트 구현 및 토큰 발급 로직 작성' (O))\n"
         "## 💡 출력 가이드 (Strict JSON 배열만 출력)\n"
         "[\n"
         "  {\n"
@@ -99,7 +141,7 @@ def domain_decomposer(state: AgentState) -> dict:
         "]"
     )
 
-    user_message = f"기술 스택: {tech_stack}\n\n<PRD_CONTENT>\n{parsed_text}\n</PRD_CONTENT>"
+    user_message = f"기술 스택: {tech_stack}\n\n<REFINED_GUIDE>\n{refined_requirements}\n</REFINED_GUIDE>"
     messages = [SystemMessage(content=system_prompt), HumanMessage(content=user_message)]
     response = llm.invoke(messages)
     
@@ -152,11 +194,14 @@ def finalize(state: AgentState) -> dict:
 def build_pipeline_graph_v3() -> StateGraph:
     graph = StateGraph(AgentState)
     graph.add_node("parse_document", parse_document)
+    graph.add_node("requirement_refiner", requirement_refiner)
     graph.add_node("domain_decomposer", domain_decomposer)
     graph.add_node("quality_validator", quality_validator)
     graph.add_node("finalize", finalize)
+    
     graph.set_entry_point("parse_document")
-    graph.add_edge("parse_document", "domain_decomposer")
+    graph.add_edge("parse_document", "requirement_refiner")
+    graph.add_edge("requirement_refiner", "domain_decomposer")
     graph.add_edge("domain_decomposer", "quality_validator")
     graph.add_edge("quality_validator", "finalize")
     graph.add_edge("finalize", END)
