@@ -14,17 +14,23 @@ Pipeline Router — REST API
 
   POST   /pipelines/generate-and-save   → AI 생성 + DB 저장 (기본)
   POST   /pipelines/generate-2pass      → 2-Pass AI 생성 + DB 저장
+  POST   /pipelines/interview           → Ouroboros 사전 인터뷰
 """
 import logging
 import tempfile
 import os
-from typing import Optional
+from typing import Optional, List, Any, Dict
+import json
 
 from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from docling.document_converter import DocumentConverter
+from pydantic import BaseModel
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 
 from app.database import get_db
+from app.config import get_settings
 from app.schemas.pipeline import (
     PipelineCreate,
     PipelineUpdate,
@@ -34,6 +40,7 @@ from app.schemas.pipeline import (
     PipelineStepUpdate,
     PipelineStepResponse,
     PipelineV3Response,
+    MeetingStepConfirmation,
 )
 from app.services import pipeline_service
 from app.services import two_pass_pipeline_service
@@ -43,6 +50,38 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/pipelines", tags=["Pipelines"])
 
+class InterviewRequest(BaseModel):
+    user_message: str
+    chat_history: List[Dict[str, str]] = [] # [{"role": "user"|"ai", "content": "..."}]
+    context: str = ""
+
+@router.post("/interview", summary="Ouroboros 사전 인터뷰")
+async def ouroboros_interview(request: InterviewRequest):
+    settings = get_settings()
+    llm = ChatOpenAI(model="gpt-4o", temperature=0.5, api_key=settings.openai_api_key)
+    
+    system_prompt = (
+        "당신은 Ouroboros 인터뷰어이자 수석 소프트웨어 아키텍트입니다.\n"
+        "당신의 목표는 사용자가 제공한 기획 내용(Context)을 바탕으로, 개발 파이프라인을 짤 때 필요한 핵심 디테일을 '역질문'하여 끌어내는 것입니다.\n"
+        "- 한 번에 하나의 날카로운 질문만 던지세요.\n"
+        "- 사용자에게 정답을 주입하지 말고, 스스로 생각하게 유도하세요 (소크라테스식 문답).\n"
+        "- 대화가 충분히 구체화되었다고 판단되면, '이제 이 내용을 바탕으로 파이프라인을 생성할 수 있습니다.'라고 안내하세요."
+    )
+    
+    messages = [SystemMessage(content=system_prompt)]
+    if request.context:
+        messages.append(SystemMessage(content=f"<PRD_CONTEXT>\n{request.context}\n</PRD_CONTEXT>"))
+        
+    for chat in request.chat_history:
+        if chat["role"] == "user":
+            messages.append(HumanMessage(content=chat["content"]))
+        else:
+            messages.append(AIMessage(content=chat["content"]))
+            
+    messages.append(HumanMessage(content=request.user_message))
+    
+    response = llm.invoke(messages)
+    return {"ai_reply": response.content}
 
 # ──────────────────────────────────────────────
 # Pipeline CRUD
@@ -151,7 +190,7 @@ async def update_step(
 )
 async def confirm_step(
     step_id: int,
-    data: app.schemas.pipeline.MeetingStepConfirmation,
+    data: MeetingStepConfirmation,
     db: AsyncSession = Depends(get_db),
 ):
     return await pipeline_service.confirm_pipeline_step_via_meeting(
@@ -417,4 +456,3 @@ async def generate_v3_pipeline(
         db, project_id, pipeline_items, category, tech_stack
     )
     return pipeline
-
