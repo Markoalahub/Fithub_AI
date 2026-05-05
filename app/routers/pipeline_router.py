@@ -352,7 +352,7 @@ async def generate_2pass_pipeline(
 async def generate_v3_pipeline(
     project_id: int = Form(..., description="Spring DB의 project ID (Logical FK)"),
     requirements: str = Form(..., description="기획자 요구사항 텍스트"),
-    categories: Optional[str] = Form(None, alias="categories", description="파이프라인 카테고리 (예: 'BE')"),
+    category: Optional[str] = Form(None, alias="category", description="파이프라인 카테고리 (예: 'BE')"),
     tech_stack: Optional[str] = Form(None, description="사용할 기술 스택 (예: 'Spring Boot, JPA')"),
     file: Optional[UploadFile] = File(None, description="PRD PDF 파일 (선택)"),
     db: AsyncSession = Depends(get_db),
@@ -366,7 +366,7 @@ async def generate_v3_pipeline(
             raise HTTPException(status_code=400, detail="PDF 파일만 업로드 가능합니다.")
         pdf_bytes = await file.read()
 
-    category = categories  # 내부 변수명 통일
+    category = category  # 내부 변수명 통일 (파라미터명과 동일)
 
     # V3 그래프 실행
     try:

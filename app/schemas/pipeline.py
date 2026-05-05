@@ -40,6 +40,7 @@ class PipelineStepConfirmation(BaseModel):
 class PipelineStepUpdate(BaseModel):
     """파이프라인 스텝 수정 요청"""
     step_task_description: Optional[str] = None
+    step_details: Optional[List[str]] = None
     step_sequence_number: Optional[int] = Field(None, ge=1)
     step_github_status: Optional[str] = Field(None, description="Open | Closed")
     step_planner_confirm_yn: Optional[str] = None

@@ -120,12 +120,16 @@ async def create_pipeline_step(
 
     step = PipelineStep(
         pipeline_id=pipeline_id,
-        title=data.title,
-        description=data.description,
-        duration=data.duration,
+        step_task_description=data.step_task_description,
+        step_details=data.step_details,
+        category=data.category,
+        step_sequence_number=data.step_sequence_number,
+        priority=data.priority,
+        deadline_date=data.deadline_date,
+        deadline_time=data.deadline_time,
         tech_stack=data.tech_stack,
-        is_completed=data.is_completed,
-        origin=data.origin,
+        depends_on=data.depends_on,
+        origin=data.origin or "user_created",
     )
     db.add(step)
     await db.flush()
@@ -148,11 +152,31 @@ async def get_pipeline_step(
 async def update_pipeline_step(
     db: AsyncSession, step_id: int, data: PipelineStepUpdate
 ) -> PipelineStep:
-    """스텝 수정"""
+    """스텝 수정 (승인 기반 제어 로직 포함)"""
     step = await get_pipeline_step(db, step_id)
     update_data = data.model_dump(exclude_unset=True)
+ 
+    # 컨펌 관련 필드 이외의 필드가 포함되어 있는지 확인
+    content_fields = {
+        "step_task_description", "step_details", "step_sequence_number", 
+        "deadline_date", "deadline_time", "tech_stack", "depends_on",
+        "category", "priority", "duration"
+    }
+    is_updating_content = any(field in update_data for field in content_fields)
+ 
+    # 내용 수정 시 승인 여부 체크 (기존 상태가 Confirmed여야 함)
+    # 단, 컨펌 필드 자체를 업데이트하는 경우는 제외
+    if is_updating_content:
+        if step.step_planner_confirm_yn != "Approved" or step.step_developer_confirm_yn != "Approved":
+            raise HTTPException(
+                status_code=403, 
+                detail="기획자와 개발자의 승인이 모두 완료(Approved)된 후에만 내용을 수정할 수 있습니다. 회의를 통해 먼저 컨펌해 주세요."
+            )
+ 
+    # 데이터 업데이트
     for key, value in update_data.items():
         setattr(step, key, value)
+    
     await db.flush()
     return step
 
