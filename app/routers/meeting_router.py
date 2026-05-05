@@ -28,6 +28,7 @@ from app.schemas.meeting import (
     MeetingAttendeeCreate,
     MeetingAttendeeResponse,
     MeetingStepRelationResponse,
+    MeetingStepConfirmation,
     MeetingSummarizeResponse,
 )
 from app.services import meeting_service
@@ -161,6 +162,19 @@ async def unlink_from_step(
     db: AsyncSession = Depends(get_db),
 ):
     await meeting_service.unlink_meeting_from_step(db, relation_id)
+
+
+@router.patch(
+    "/step-relations/{relation_id}/confirm",
+    response_model=MeetingStepRelationResponse,
+    summary="회의 세션 내 스텝 승인 상태 수정",
+)
+async def confirm_step_in_meeting(
+    relation_id: int,
+    data: MeetingStepConfirmation,
+    db: AsyncSession = Depends(get_db),
+):
+    return await meeting_service.confirm_step_in_meeting(db, relation_id, data)
 
 
 # ──────────────────────────────────────────────

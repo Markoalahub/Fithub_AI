@@ -42,6 +42,15 @@ class MeetingStepRelationResponse(BaseModel):
     id: int
     meeting_log_id: int
     pipeline_step_id: int
+    planner_confirm_yn: str
+    developer_confirm_yn: str
+    confirmed_at: Optional[datetime] = None
+
+
+class MeetingStepConfirmation(BaseModel):
+    """회의 세션 내 스텝 승인 요청"""
+    planner_confirm_yn: Optional[str] = Field(None, description="Pending | Approved")
+    developer_confirm_yn: Optional[str] = Field(None, description="Pending | Approved")
 
 
 # ──────────────────────────────────────────────

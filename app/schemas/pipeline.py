@@ -10,7 +10,7 @@ Request/Response DTO — ORM ↔ API 경계 분리
 """
 from pydantic import BaseModel, Field, ConfigDict
 from typing import List, Optional
-from datetime import datetime
+from datetime import datetime, date, time
 
 
 # ──────────────────────────────────────────────
@@ -19,26 +19,33 @@ from datetime import datetime
 
 class PipelineStepCreate(BaseModel):
     """파이프라인 스텝 생성 요청"""
-    step_task_description: str = Field(..., description="해당 스텝에서 수행할 구체적인 작업 상세 내용")
+    step_task_description: str = Field(..., description="해당 스텝의 요약 설명")
+    step_details: Optional[List[str]] = Field(None, description="상세 작업 리스트")
+    category: Optional[str] = Field(None, description="BE | FE | DB | INFRA | AI")
     step_sequence_number: int = Field(..., ge=1, description="파이프라인 내 작업 배치 순서")
-    duration: Optional[str] = Field(None, max_length=100, description="예상 소요 시간 (예: '2-3일')")
-    tech_stack: Optional[str] = Field(None, max_length=200, description="기술스택")
-    origin: Optional[str] = Field(
-        "user_created",
-        max_length=50,
-        description="생성 출처: ai_generated | user_created | meeting_derived",
-    )
+    priority: int = Field(1, ge=1, le=2, description="1: 핵심, 2: 부가")
+    deadline_date: Optional[date] = Field(None, description="마감 날짜")
+    deadline_time: Optional[time] = Field(None, description="마감 시간")
+    tech_stack: Optional[List[str]] = Field(None, description="기술 스택 리스트 (GitHub 라벨용)")
+    depends_on: Optional[List[int]] = Field(default_factory=list, description="선행 작업 sequence_number 리스트")
+    origin: Optional[str] = Field(None, max_length=50, description="출처")
 
 
 class PipelineStepConfirmation(BaseModel):
-    """파이프라인 스텝 승인 요청"""
+    """파이프라인 스텝 승인 요청 (직접 입력 방식 - 레거시)"""
     step_planner_confirm_yn: str = Field(..., description="기획자 승인: Pending | Approved")
     step_developer_confirm_yn: str = Field(..., description="개발자 승인: Pending | Approved")
+
+
+class MeetingStepConfirmation(BaseModel):
+    """회의 기반 파이프라인 스텝 최종 승인 요청"""
+    meeting_id: int = Field(..., description="상태를 확인할 회의(MeetingLog)의 PK")
 
 
 class PipelineStepUpdate(BaseModel):
     """파이프라인 스텝 수정 요청"""
     step_task_description: Optional[str] = None
+    step_details: Optional[List[str]] = None
     step_sequence_number: Optional[int] = Field(None, ge=1)
     step_github_status: Optional[str] = Field(None, description="Open | Closed")
     step_planner_confirm_yn: Optional[str] = None
@@ -55,7 +62,14 @@ class PipelineStepResponse(BaseModel):
     id: int
     pipeline_id: int
     step_task_description: str
+    step_details: Optional[List[str]] = None
+    category: Optional[str] = None
     step_sequence_number: int
+    priority: int
+    deadline_date: Optional[date] = None
+    deadline_time: Optional[time] = None
+    tech_stack: Optional[List[str]] = None
+    depends_on: Optional[List[int]] = None
     step_github_status: str
     step_planner_confirm_yn: str
     step_developer_confirm_yn: str
@@ -64,6 +78,7 @@ class PipelineStepResponse(BaseModel):
     duration: Optional[str] = None
     tech_stack: Optional[str] = None
     origin: Optional[str] = None
+    priority: int
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -78,6 +93,7 @@ class PipelineCreate(BaseModel):
     category: Optional[str] = Field(None, max_length=100, description="파이프라인 카테고리")
     version: int = Field(1, ge=1, description="버전")
     is_active: str = Field("Active", description="Active | Inactive")
+    tech_stack: Optional[str] = Field(None, max_length=200, description="기술 스택")
     steps: Optional[List[PipelineStepCreate]] = Field(
         None, description="함께 생성할 스텝 목록 (선택)"
     )
@@ -88,6 +104,7 @@ class PipelineUpdate(BaseModel):
     category: Optional[str] = Field(None, max_length=100)
     version: Optional[int] = Field(None, ge=1)
     is_active: Optional[str] = None
+    tech_stack: Optional[str] = None
 
 
 class PipelineResponse(BaseModel):
@@ -99,6 +116,7 @@ class PipelineResponse(BaseModel):
     category: Optional[str] = None
     version: int
     is_active: str
+    tech_stack: Optional[str] = None
     steps: List[PipelineStepResponse] = []
 
 
@@ -106,3 +124,35 @@ class PipelineListResponse(BaseModel):
     """파이프라인 목록 응답"""
     pipelines: List[PipelineResponse]
     total: int
+
+
+# ──────────────────────────────────────────────
+# V3 Specialized (Slim)
+# ──────────────────────────────────────────────
+
+class PipelineStepV3Response(BaseModel):
+    """V3 최적화 스텝 응답 (불필요한 필드 제거)"""
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    step_task_description: str
+    step_details: Optional[List[str]] = None
+    category: Optional[str] = None
+    step_sequence_number: int
+    priority: int
+    deadline_date: Optional[date] = None
+    deadline_time: Optional[time] = None
+    tech_stack: Optional[List[str]] = None
+    depends_on: Optional[List[int]] = None
+
+
+class PipelineV3Response(BaseModel):
+    """V3 최적화 파이프라인 응답 (불필요한 필드 제거)"""
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    project_id: int
+    category: Optional[str] = None
+    version: int
+    tech_stack: Optional[str] = None
+    steps: List[PipelineStepV3Response] = []

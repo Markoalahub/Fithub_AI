@@ -16,11 +16,14 @@ from app.models.db.meeting import (
     MeetingAttendee,
     MeetingStepRelation,
 )
+from app.models.db.pipeline import PipelineStep
 from app.schemas.meeting import (
     MeetingLogCreate,
     MeetingLogUpdate,
     MeetingSummarizeResponse,
+    MeetingStepConfirmation,
 )
+from datetime import datetime
 from app.config import get_settings
 
 
@@ -252,3 +255,40 @@ async def summarize_meeting(
         summary=summary_text,
         derived_steps=derived_steps,
     )
+
+
+async def confirm_step_in_meeting(
+    db: AsyncSession, relation_id: int, data: MeetingStepConfirmation
+) -> MeetingStepRelation:
+    """회의 세션 내에서 특정 스텝의 승인 상태를 업데이트"""
+    result = await db.execute(
+        select(MeetingStepRelation)
+        .options(selectinload(MeetingStepRelation.pipeline_step))
+        .where(MeetingStepRelation.id == relation_id)
+    )
+    relation = result.scalar_one_or_none()
+    if relation is None:
+        raise HTTPException(status_code=404, detail="연결 관계를 찾을 수 없습니다.")
+
+    # 1. 관계 테이블(회의 기록용) 업데이트
+    if data.planner_confirm_yn:
+        relation.planner_confirm_yn = data.planner_confirm_yn
+    if data.developer_confirm_yn:
+        relation.developer_confirm_yn = data.developer_confirm_yn
+
+    # 양측 모두 승인 시 확정 시각 기록
+    if (
+        relation.planner_confirm_yn == "Approved"
+        and relation.developer_confirm_yn == "Approved"
+    ):
+        relation.confirmed_at = datetime.utcnow()
+
+        # 2. (선택사항) 원본 파이프라인 스텝의 최종 상태와도 동기화
+        step = relation.pipeline_step
+        if step:
+            step.step_planner_confirm_yn = "Approved"
+            step.step_developer_confirm_yn = "Approved"
+            step.step_confirmation_date = relation.confirmed_at
+
+    await db.flush()
+    return relation

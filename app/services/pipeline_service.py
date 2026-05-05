@@ -30,6 +30,7 @@ async def create_pipeline(
         category=data.category,
         version=data.version,
         is_active=data.is_active,
+        tech_stack=data.tech_stack,
     )
     db.add(pipeline)
     await db.flush()  # id 확보
@@ -38,10 +39,16 @@ async def create_pipeline(
         for step_data in data.steps:
             step = PipelineStep(
                 pipeline_id=pipeline.id,
-                title=step_data.title,
-                description=step_data.description,
-                is_completed=step_data.is_completed,
+                step_task_description=step_data.step_task_description,
+                step_sequence_number=step_data.step_sequence_number,
+                category=step_data.category,
+                priority=step_data.priority,
+                deadline_date=step_data.deadline_date,
+                deadline_time=step_data.deadline_time,
+                tech_stack=step_data.tech_stack,
+                depends_on=step_data.depends_on,
                 origin=step_data.origin,
+                step_details=step_data.step_details,
             )
             db.add(step)
 
@@ -113,12 +120,16 @@ async def create_pipeline_step(
 
     step = PipelineStep(
         pipeline_id=pipeline_id,
-        title=data.title,
-        description=data.description,
-        duration=data.duration,
+        step_task_description=data.step_task_description,
+        step_details=data.step_details,
+        category=data.category,
+        step_sequence_number=data.step_sequence_number,
+        priority=data.priority,
+        deadline_date=data.deadline_date,
+        deadline_time=data.deadline_time,
         tech_stack=data.tech_stack,
-        is_completed=data.is_completed,
-        origin=data.origin,
+        depends_on=data.depends_on,
+        origin=data.origin or "user_created",
     )
     db.add(step)
     await db.flush()
@@ -141,11 +152,66 @@ async def get_pipeline_step(
 async def update_pipeline_step(
     db: AsyncSession, step_id: int, data: PipelineStepUpdate
 ) -> PipelineStep:
-    """스텝 수정"""
+    """스텝 수정 (승인 기반 제어 로직 포함)"""
     step = await get_pipeline_step(db, step_id)
     update_data = data.model_dump(exclude_unset=True)
+ 
+    # 컨펌 관련 필드 이외의 필드가 포함되어 있는지 확인
+    content_fields = {
+        "step_task_description", "step_details", "step_sequence_number", 
+        "deadline_date", "deadline_time", "tech_stack", "depends_on",
+        "category", "priority", "duration"
+    }
+    is_updating_content = any(field in update_data for field in content_fields)
+ 
+    # 내용 수정 시 승인 여부 체크
+    if is_updating_content:
+        if step.step_planner_confirm_yn != "Approved" or step.step_developer_confirm_yn != "Approved":
+            raise HTTPException(
+                status_code=403, 
+                detail="기획자와 개발자의 승인이 모두 완료(Approved)된 후에만 내용을 수정할 수 있습니다. 회의를 통해 먼저 컨펌해 주세요."
+            )
+ 
+    # 데이터 업데이트
     for key, value in update_data.items():
         setattr(step, key, value)
+    
+    await db.flush()
+    return step
+
+
+async def confirm_pipeline_step_via_meeting(
+    db: AsyncSession, step_id: int, meeting_id: int
+) -> PipelineStep:
+    """
+    특정 회의(meeting_id)에서 양측 승인이 완료되었는지 확인하고 파이프라인 스텝을 최종 승인 처리함.
+    """
+    from app.models.db.meeting import MeetingStepRelation
+
+    # 1. 회의-스텝 관계 조회
+    result = await db.execute(
+        select(MeetingStepRelation).where(
+            MeetingStepRelation.meeting_log_id == meeting_id,
+            MeetingStepRelation.pipeline_step_id == step_id
+        )
+    )
+    relation = result.scalar_one_or_none()
+    
+    if not relation:
+        raise HTTPException(status_code=404, detail="해당 회의와 스텝의 연결 정보를 찾을 수 없습니다.")
+
+    # 2. 양측 승인 여부 확인
+    if relation.planner_confirm_yn != "Approved" or relation.developer_confirm_yn != "Approved":
+        raise HTTPException(
+            status_code=400, 
+            detail=f"회의(ID:{meeting_id}) 내에서 아직 양측 승인이 완료되지 않았습니다. (Planner:{relation.planner_confirm_yn}, Developer:{relation.developer_confirm_yn})"
+        )
+
+    # 3. 파이프라인 스텝 최종 업데이트
+    step = await get_pipeline_step(db, step_id)
+    step.step_planner_confirm_yn = "Approved"
+    step.step_developer_confirm_yn = "Approved"
+    
     await db.flush()
     return step
 
@@ -166,6 +232,7 @@ async def save_ai_pipeline_to_db(
     project_id: int,
     pipeline_items: list,
     category: Optional[str] = None,
+    tech_stack: Optional[str] = None,
 ) -> Pipeline:
     """
     LangGraph가 생성한 PipelineItem 리스트를 DB에 저장.
@@ -176,11 +243,11 @@ async def save_ai_pipeline_to_db(
     existing = await db.execute(
         select(Pipeline).where(
             Pipeline.project_id == project_id,
-            Pipeline.is_active == True,  # noqa: E712
+            Pipeline.is_active == "Active",
         )
     )
     for pipeline in existing.scalars().all():
-        pipeline.is_active = False
+        pipeline.is_active = "Inactive"
 
     # 최신 버전 번호 조회
     version_result = await db.execute(
@@ -196,21 +263,22 @@ async def save_ai_pipeline_to_db(
         project_id=project_id,
         category=category,
         version=latest_version + 1,
-        is_active=True,
+        is_active="Active",
+        tech_stack=tech_stack,
         steps=[
             PipelineStepCreate(
-                title=(item.title if hasattr(item, 'title') else item.get('title', '')),
-                description=(
-                    "\n".join(item.details)
-                    if hasattr(item, "details")
-                    else "\n".join(item.get('details', []))
-                ),
-                duration=getattr(item, "duration", None) if hasattr(item, "__dict__") else item.get('duration'),
-                tech_stack=getattr(item, "tech_stack", None) if hasattr(item, "__dict__") else item.get('tech_stack'),
-                is_completed=False,
+                step_task_description=item.get('title', '') if isinstance(item, dict) else getattr(item, 'title', ''),
+                step_details=item.get('details', []) if isinstance(item, dict) else getattr(item, 'details', []),
+                category=item.get('category', category) if isinstance(item, dict) else getattr(item, 'category', category),
+                step_sequence_number=idx + 1,
+                priority=max(1, min(2, getattr(item, "priority", 1) if hasattr(item, "__dict__") else item.get('priority', 1))),
+                deadline_date=None,
+                deadline_time=None,
+                tech_stack=item.get('tech_stack', []) if isinstance(item, dict) else getattr(item, 'tech_stack', []),
+                depends_on=item.get('depends_on', []) if isinstance(item, dict) else getattr(item, 'depends_on', []),
                 origin="ai_generated",
             )
-            for item in pipeline_items
+            for idx, item in enumerate(pipeline_items)
         ],
     )
 

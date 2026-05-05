@@ -33,6 +33,7 @@ from app.schemas.pipeline import (
     PipelineStepCreate,
     PipelineStepUpdate,
     PipelineStepResponse,
+    PipelineV3Response,
 )
 from app.services import pipeline_service
 from app.services import two_pass_pipeline_service
@@ -140,6 +141,22 @@ async def update_step(
     db: AsyncSession = Depends(get_db),
 ):
     return await pipeline_service.update_pipeline_step(db, step_id, data)
+
+
+@router.patch(
+    "/steps/{step_id}/confirm",
+    response_model=PipelineStepResponse,
+    summary="회의 기반 파이프라인 스텝 최종 승인",
+    description="회의록(meeting_id)의 승인 상태를 확인하여 파이프라인 스텝을 최종 승인(Approved) 처리합니다.",
+)
+async def confirm_step(
+    step_id: int,
+    data: app.schemas.pipeline.MeetingStepConfirmation,
+    db: AsyncSession = Depends(get_db),
+):
+    return await pipeline_service.confirm_pipeline_step_via_meeting(
+        db, step_id, data.meeting_id
+    )
 
 
 @router.delete(
@@ -332,3 +349,72 @@ async def generate_2pass_pipeline(
         pipelines=saved_pipelines,
         total=len(saved_pipelines),
     )
+
+
+# ──────────────────────────────────────────────
+# V3 AI Pipeline Generation (Orchestrator-Worker)
+# ──────────────────────────────────────────────
+
+@router.post(
+    "/generate-v3",
+    response_model=PipelineV3Response,
+    summary="V3 AI 파이프라인 생성 (Orchestrator-Worker) → DB 저장",
+    description=(
+        "Pipe.md 기반 원자적 작업(Atomic Task) 분해 로직을 적용한 파이프라인 생성입니다.\n"
+        "Orchestrator(도메인 분해) → Worker(5-200-4 규칙 기반 태스크 생성) → Critic(품질 검증) "
+        "순환 루프를 통해 가장 정밀한 파이프라인을 구축합니다."
+    ),
+)
+async def generate_v3_pipeline(
+    project_id: int = Form(..., description="Spring DB의 project ID (Logical FK)"),
+    requirements: str = Form(..., description="기획자 요구사항 텍스트"),
+    category: Optional[str] = Form(None, alias="category", description="파이프라인 카테고리 (예: 'BE')"),
+    tech_stack: Optional[str] = Form(None, description="사용할 기술 스택 (예: 'Spring Boot, JPA')"),
+    file: Optional[UploadFile] = File(None, description="PRD PDF 파일 (선택)"),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.graph.pipeline_graph_v3 import pipeline_graph_v3
+    
+    # PDF 바이트 읽기
+    pdf_bytes: Optional[bytes] = None
+    if file is not None:
+        if not file.filename.endswith(".pdf"):
+            raise HTTPException(status_code=400, detail="PDF 파일만 업로드 가능합니다.")
+        pdf_bytes = await file.read()
+
+    category = category  # 내부 변수명 통일 (파라미터명과 동일)
+
+    # V3 그래프 실행
+    try:
+        result = await pipeline_graph_v3.ainvoke({
+            "prd_context": requirements,
+            "technical_stack": tech_stack or "최적 스택",
+            "todos": [],
+            "completed_steps": [],
+            "feedback": "",
+            "iteration_count": 0,
+            "pdf_bytes": pdf_bytes,
+            "parsed_text": "",
+            "category": category or "BE",
+            "final_pipeline": [],
+        }, config={"recursion_limit": 1000})
+    except Exception as e:
+        logger.error(f"V3 파이프라인 생성 실패: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"V3 파이프라인 생성 중 오류: {str(e)}",
+        )
+
+    pipeline_items = result.get("final_pipeline", [])
+    if not pipeline_items:
+        raise HTTPException(
+            status_code=500,
+            detail="AI가 파이프라인 아이템을 생성하지 못했습니다.",
+        )
+
+    # DB 저장 (dict 형식 그대로 전달)
+    pipeline = await pipeline_service.save_ai_pipeline_to_db(
+        db, project_id, pipeline_items, category, tech_stack
+    )
+    return pipeline
+
