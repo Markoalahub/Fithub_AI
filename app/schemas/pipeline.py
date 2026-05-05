@@ -32,9 +32,14 @@ class PipelineStepCreate(BaseModel):
 
 
 class PipelineStepConfirmation(BaseModel):
-    """파이프라인 스텝 승인 요청"""
+    """파이프라인 스텝 승인 요청 (직접 입력 방식 - 레거시)"""
     step_planner_confirm_yn: str = Field(..., description="기획자 승인: Pending | Approved")
     step_developer_confirm_yn: str = Field(..., description="개발자 승인: Pending | Approved")
+
+
+class MeetingStepConfirmation(BaseModel):
+    """회의 기반 파이프라인 스텝 최종 승인 요청"""
+    meeting_id: int = Field(..., description="상태를 확인할 회의(MeetingLog)의 PK")
 
 
 class PipelineStepUpdate(BaseModel):

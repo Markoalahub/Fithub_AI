@@ -143,6 +143,22 @@ async def update_step(
     return await pipeline_service.update_pipeline_step(db, step_id, data)
 
 
+@router.patch(
+    "/steps/{step_id}/confirm",
+    response_model=PipelineStepResponse,
+    summary="회의 기반 파이프라인 스텝 최종 승인",
+    description="회의록(meeting_id)의 승인 상태를 확인하여 파이프라인 스텝을 최종 승인(Approved) 처리합니다.",
+)
+async def confirm_step(
+    step_id: int,
+    data: app.schemas.pipeline.MeetingStepConfirmation,
+    db: AsyncSession = Depends(get_db),
+):
+    return await pipeline_service.confirm_pipeline_step_via_meeting(
+        db, step_id, data.meeting_id
+    )
+
+
 @router.delete(
     "/steps/{step_id}",
     status_code=204,

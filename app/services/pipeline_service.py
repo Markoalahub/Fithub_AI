@@ -164,8 +164,7 @@ async def update_pipeline_step(
     }
     is_updating_content = any(field in update_data for field in content_fields)
  
-    # 내용 수정 시 승인 여부 체크 (기존 상태가 Confirmed여야 함)
-    # 단, 컨펌 필드 자체를 업데이트하는 경우는 제외
+    # 내용 수정 시 승인 여부 체크
     if is_updating_content:
         if step.step_planner_confirm_yn != "Approved" or step.step_developer_confirm_yn != "Approved":
             raise HTTPException(
@@ -176,6 +175,42 @@ async def update_pipeline_step(
     # 데이터 업데이트
     for key, value in update_data.items():
         setattr(step, key, value)
+    
+    await db.flush()
+    return step
+
+
+async def confirm_pipeline_step_via_meeting(
+    db: AsyncSession, step_id: int, meeting_id: int
+) -> PipelineStep:
+    """
+    특정 회의(meeting_id)에서 양측 승인이 완료되었는지 확인하고 파이프라인 스텝을 최종 승인 처리함.
+    """
+    from app.models.db.meeting import MeetingStepRelation
+
+    # 1. 회의-스텝 관계 조회
+    result = await db.execute(
+        select(MeetingStepRelation).where(
+            MeetingStepRelation.meeting_log_id == meeting_id,
+            MeetingStepRelation.pipeline_step_id == step_id
+        )
+    )
+    relation = result.scalar_one_or_none()
+    
+    if not relation:
+        raise HTTPException(status_code=404, detail="해당 회의와 스텝의 연결 정보를 찾을 수 없습니다.")
+
+    # 2. 양측 승인 여부 확인
+    if relation.planner_confirm_yn != "Approved" or relation.developer_confirm_yn != "Approved":
+        raise HTTPException(
+            status_code=400, 
+            detail=f"회의(ID:{meeting_id}) 내에서 아직 양측 승인이 완료되지 않았습니다. (Planner:{relation.planner_confirm_yn}, Developer:{relation.developer_confirm_yn})"
+        )
+
+    # 3. 파이프라인 스텝 최종 업데이트
+    step = await get_pipeline_step(db, step_id)
+    step.step_planner_confirm_yn = "Approved"
+    step.step_developer_confirm_yn = "Approved"
     
     await db.flush()
     return step
