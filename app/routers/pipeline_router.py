@@ -503,3 +503,164 @@ async def generate_v3_pipeline(
         db, project_id, pipeline_items, category, tech_stack
     )
     return pipeline
+
+
+# ──────────────────────────────────────────────
+# Stage 1: PRD → 인터뷰 세션 기반 유저 플로우 생성
+# ──────────────────────────────────────────────
+
+@router.post(
+    "/generate-userflow",
+    summary="Stage 1: PRD → 인터뷰 세션 시작",
+    description=(
+        "PRD(기획서)를 AI가 분석하여 기능 분류 초안 + 확인 질문을 반환합니다.\n\n"
+        "**Multi-turn 인터뷰 방식:**\n"
+        "1. 이 엔드포인트로 PRD를 전송하면, AI가 분석 초안 + 질문을 반환\n"
+        "2. `/userflow-session/{flow_id}/answer`로 기획자가 답변\n"
+        "3. AI가 추가 질문 or 최종 유저 플로우 생성 (최대 4턴)\n"
+        "4. 기획자가 `confirm=true`로 보내면 즉시 확정"
+    ),
+)
+async def generate_userflow(
+    project_id: int = Form(..., description="Spring DB의 project ID (Logical FK)"),
+    requirements: str = Form(..., description="기획자 요구사항 텍스트 (PRD)"),
+    file: Optional[UploadFile] = File(None, description="PRD PDF 파일 (선택)"),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services import userflow_service
+
+    # PDF 바이트 읽기
+    pdf_bytes: Optional[bytes] = None
+    if file is not None:
+        if not file.filename.endswith(".pdf"):
+            raise HTTPException(status_code=400, detail="PDF 파일만 업로드 가능합니다.")
+        pdf_bytes = await file.read()
+
+    try:
+        result = await userflow_service.start_userflow_session(
+            db, project_id, requirements, pdf_bytes
+        )
+        return result
+    except Exception as e:
+        import traceback
+        error_msg = traceback.format_exc()
+        logger.error(f"Stage 1 인터뷰 세션 시작 실패:\n{error_msg}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"유저 플로우 인터뷰 시작 중 오류: {str(e)}\n{error_msg[:200]}...",
+        )
+
+
+@router.post(
+    "/userflow-session/{flow_id}/answer",
+    summary="Stage 1 (계속): 기획자 답변 → AI 추가 질문 or 유저 플로우 확정",
+    description=(
+        "인터뷰 세션에서 기획자의 답변을 받아 AI가 처리합니다.\n\n"
+        "- 추가 확인이 필요하면: AI가 다음 질문을 반환\n"
+        "- 모든 확인이 끝나면: 최종 유저 플로우 DAG를 생성하여 반환\n"
+        "- `confirm=true`로 보내면: 현재까지의 내용으로 즉시 유저 플로우 생성\n"
+        "- 최대 4턴 도달 시: 자동으로 최종 생성"
+    ),
+)
+async def answer_userflow_session(
+    flow_id: int,
+    answer: str = Form(..., description="기획자의 답변 텍스트"),
+    confirm: bool = Form(False, description="True면 현재 상태로 즉시 유저 플로우 확정"),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services import userflow_service
+
+    try:
+        result = await userflow_service.handle_session_answer(
+            db=db,
+            flow_id=flow_id,
+            user_answer=answer,
+            force_confirm=confirm,
+        )
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Stage 1 인터뷰 답변 처리 실패: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"인터뷰 답변 처리 중 오류: {str(e)}",
+        )
+
+
+# ──────────────────────────────────────────────
+# Stage 2: 유저 플로우 → ASCII 와이어프레임 생성
+# ──────────────────────────────────────────────
+
+@router.post(
+    "/generate-wireframe",
+    summary="Stage 2: 유저 플로우 → ASCII 와이어프레임 생성",
+    description=(
+        "Stage 1에서 생성된 유저 플로우의 각 화면(screen) 노드에 대해 "
+        "ASCII 형태의 lo-fi 와이어프레임을 AI로 생성합니다.\n\n"
+        "- 유저 플로우 노드의 wireframe_ascii 필드에 저장\n"
+        "- process/decision 노드는 건너뜁니다"
+    ),
+)
+async def generate_wireframe(
+    user_flow_id: int = Form(..., description="Stage 1에서 생성된 유저 플로우 ID"),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services import userflow_service
+    from app.schemas.userflow import UserFlowResponse
+
+    try:
+        user_flow = await userflow_service.generate_and_save_wireframes(db, user_flow_id)
+        return UserFlowResponse.model_validate(user_flow)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Stage 2 와이어프레임 생성 실패: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"와이어프레임 생성 중 오류: {str(e)}",
+        )
+
+
+# ──────────────────────────────────────────────
+# Stage 3: 유저 플로우 + 와이어프레임 → 개발 파이프라인 생성
+# ──────────────────────────────────────────────
+
+@router.post(
+    "/generate-pipeline-from-flow",
+    response_model=PipelineV3Response,
+    summary="Stage 3: 유저 플로우 + 와이어프레임 → 개발 파이프라인 생성",
+    description=(
+        "Stage 1(유저 플로우) + Stage 2(와이어프레임) 결과를 기반으로 "
+        "버티컬 슬라이스 방식의 개발 태스크를 분해하여 파이프라인을 생성합니다.\n\n"
+        "- 각 PipelineStep에 user_flow_node_id 참조 포함\n"
+        "- 기존 승인/이슈 전환 플로우와 호환"
+    ),
+)
+async def generate_pipeline_from_flow(
+    user_flow_id: int = Form(..., description="유저 플로우 ID"),
+    project_id: int = Form(..., description="Spring DB의 project ID (Logical FK)"),
+    category: Optional[str] = Form(None, description="파이프라인 카테고리 (BE, FE 등)"),
+    tech_stack: Optional[str] = Form(None, description="기술 스택 (예: Spring Boot, JPA)"),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services import userflow_service
+
+    try:
+        pipeline = await userflow_service.generate_and_save_pipeline_from_flow(
+            db=db,
+            flow_id=user_flow_id,
+            project_id=project_id,
+            category=category,
+            tech_stack=tech_stack,
+        )
+        return pipeline
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Stage 3 파이프라인 생성 실패: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"유저 플로우 기반 파이프라인 생성 중 오류: {str(e)}",
+        )
+

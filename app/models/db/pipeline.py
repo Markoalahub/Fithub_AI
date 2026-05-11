@@ -107,6 +107,15 @@ class PipelineStep(Base):
         comment="생성 출처: ai_generated | user_created | meeting_derived",
     )
 
+    # 유저 플로우 연결 (Stage 3에서 설정)
+    user_flow_node_id = Column(
+        Integer,
+        ForeignKey("user_flow_nodes.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+        comment="연결된 유저 플로우 노드 (Stage 3에서 설정)",
+    )
+
     # Timestamps
     created_at = Column(
         DateTime,
@@ -122,6 +131,11 @@ class PipelineStep(Base):
         "MeetingStepRelation",
         back_populates="pipeline_step",
         cascade="all, delete-orphan",
+        lazy="selectin",
+    )
+    user_flow_node = relationship(
+        "UserFlowNode",
+        back_populates="pipeline_steps",
         lazy="selectin",
     )
 

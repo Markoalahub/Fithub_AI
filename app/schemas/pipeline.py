@@ -144,6 +144,7 @@ class PipelineStepV3Response(BaseModel):
     deadline_time: Optional[time] = None
     tech_stack: Optional[List[str]] = None
     depends_on: Optional[List[int]] = None
+    user_flow_node_id: Optional[int] = None
 
 
 class PipelineV3Response(BaseModel):
