@@ -70,6 +70,9 @@ class MeetingLogCreate(BaseModel):
     attendee_user_ids: Optional[List[int]] = Field(
         None, description="참석자 user_id 목록 (Logical FK → Spring DB)"
     )
+    is_translation_session: Optional[bool] = False
+    conversation_type: Optional[str] = "meeting"
+    translation_history: Optional[Dict[str, Any]] = None
 
 
 class MeetingLogUpdate(BaseModel):
