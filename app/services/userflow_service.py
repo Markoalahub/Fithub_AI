@@ -342,6 +342,11 @@ async def handle_session_answer(
 
         # 유저 플로우 DAG 저장
         flow_data = result["user_flow"]
+        logger.info(f"[DEBUG] Final flow data from AI: {flow_data}")
+        
+        if not flow_data.get("nodes"):
+            logger.warning("[DEBUG] No nodes found in AI response flow_data")
+            
         user_flow.title = flow_data.get("title", "서비스 유저 플로우")
         user_flow.interview_history = history
         user_flow.session_status = "completed"
