@@ -24,6 +24,11 @@ from app.schemas.userflow import (
 )
 from app.schemas.pipeline import PipelineStepCreate
 from app.services import pipeline_service
+from app.config import get_settings
+
+import json
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 
 logger = logging.getLogger(__name__)
 
@@ -197,20 +202,49 @@ def _parse_pdf_sync(pdf_bytes: bytes) -> str:
         return ""
 
 
+# ──────────────────────────────────────────────
+# Proposal-First Interview Engine Settings
+# ──────────────────────────────────────────────
+
+PROPOSAL_FIRST_SYSTEM_PROMPT = """
+당신은 Ouroboros 인터뷰어이자 수석 소프트웨어 아키텍트입니다.
+사용자의 추상적인 아이디어를 '실행 가능한 설계'로 구체화하는 것이 당신의 목표입니다.
+항상 "현상 분석 + 시니어 개발자의 추천 선지 + 직접 입력 옵션"의 구조를 유지하며 사용자의 의사결정을 돕는 '제안형 인터뷰(Proposal-First)'를 진행하세요.
+
+인터뷰는 다음 단계를 순차적으로 거칩니다:
+0. Step 0: 아키텍처 및 기술 스택 확정 - 만약 제공된 기술 스택({tech_stack})에 다중 값(예: React와 Vue가 혼재, Spring Boot와 Node.js가 혼재 등)이 포함되어 있다면, 본격적인 비즈니스 로직 설계 전에 이를 하나로 확정하기 위한 질문과 선지를 가장 먼저 제공하세요.
+1. Layer 1: 비즈니스 로직 & 예외 처리 (The Logic) - 기술 스택이 명확해진 후, 주요 흐름 및 엣지 케이스를 정의합니다.
+2. Layer 2: 데이터 명세 & 인터페이스 (The Contract) - 도메인 모델 및 외부 API 연동을 확인합니다.
+3. Layer 3: UI 계층 & 사용자 경험 (The UX) - 화면 구성 요소 및 위계를 정의합니다.
+
+[선지 생성 원칙]
+- 전문성: 선지는 기술적 의도가 담긴 전략(Strategy)이어야 합니다.
+- 다양성: 최소 3가지 선지를 제공하세요 (표준 방식, 성능 중시 방식, 확장성 중시 방식 등).
+- 비판적 피드백: 유저가 선택한 내용이 상충할 경우, 즉시 조언(예: "보안상 위험할 수 있습니다")을 제공하세요.
+
+[기술 스택 최적화]
+사용자의 기술 스택({tech_stack}) 정보를 참고하여 해당 스택에 최적화된 구체적인 선지를 생성하되, 모호하다면 반드시 Step 0을 통해 확정 짓고 넘어가세요.
+
+[출력 형식 (Strict JSON)]
+반드시 아래 JSON 형식으로만 응답하세요. 일반 텍스트는 포함하지 마세요.
+{{
+  "ai_reply": "현재 기획하신 [기능]에 대해 시니어 개발자의 시각으로 전략을 제안합니다...",
+  "options": ["전략 A: (상세 설명)", "전략 B: (상세 설명)", "전략 C: (상세 설명)", "직접 입력: ..."],
+  "ambiguity_score": 0~100,
+  "is_ready": boolean
+}}
+"""
+
 async def start_userflow_session(
     db: AsyncSession,
     project_id: int,
     prd_text: str,
     pdf_bytes: Optional[bytes] = None,
+    tech_stack: str = "Spring Boot, React",
 ) -> dict:
     """
-    인터뷰 세션 시작: PRD 분석 → 분석 결과 + 첫 번째 질문 반환
-
-    질문 리스트를 interview_history 메타데이터에 저장하고,
-    매 턴마다 하나씩 꺼내서 질문합니다.
+    제안형(Proposal-First) 인터뷰 세션 시작
     """
-    from app.graph.userflow_graph import analyze_prd_for_interview
-
     # PDF 파싱
     pdf_content = ""
     if pdf_bytes:
@@ -220,37 +254,49 @@ async def start_userflow_session(
     if pdf_content:
         combined_prd += f"\n\n---\n[PDF 원문]\n{pdf_content}"
 
-    # AI 분석 (구조화된 JSON 반환)
-    ai_result = await analyze_prd_for_interview(combined_prd)
-    analysis = ai_result.get("analysis", "")
-    questions = ai_result.get("questions", [])
-    features = ai_result.get("features", [])
+    settings = get_settings()
+    llm = ChatOpenAI(model="gpt-4o", temperature=0.5, api_key=settings.openai_api_key)
 
-    # 첫 번째 질문 준비
-    first_question = questions[0] if questions else None
-    remaining_questions = questions[1:] if len(questions) > 1 else []
+    # 첫 번째 질문 생성을 위한 호출
+    prompt = PROPOSAL_FIRST_SYSTEM_PROMPT.format(tech_stack=tech_stack)
+    messages = [
+        SystemMessage(content=prompt),
+        HumanMessage(content=f"다음 PRD를 분석하고 Layer 1(Logic)에 대한 첫 번째 제안을 해주세요.\n\n<PRD>\n{combined_prd}\n</PRD>")
+    ]
 
-    # 첫 AI 메시지: 기능 분석 결과 + 첫 질문
-    if first_question:
-        ai_message = f"{analysis}\n\n---\n\n🗣️ **인터뷰 시작 (1/{len(questions)})**: {first_question}"
-    else:
-        ai_message = f"{analysis}\n\n✅ 모든 기능의 범위가 명확합니다. '확정' 버튼을 눌러 유저 플로우를 생성하세요."
+    response = await llm.ainvoke(messages)
+    try:
+        # JSON 파싱 시도
+        import re
+        content = response.content.strip()
+        json_match = re.search(r'\{.*\}', content, re.DOTALL)
+        if json_match:
+            content = json_match.group()
+        ai_data = json.loads(content)
+    except Exception as e:
+        logger.error(f"Interview JSON parsing error: {e}")
+        ai_data = {
+            "ai_reply": response.content,
+            "options": ["이해했습니다. 계속 진행해주세요.", "다른 대안을 제안해주세요.", "직접 입력"],
+            "ambiguity_score": 30,
+            "is_ready": False
+        }
 
+    ai_message_text = ai_data.get("ai_reply", "")
+    
     # 인터뷰 이력 초기화
     interview_history = [
-        {"role": "ai", "content": ai_message, "turn": 1},
-        # 메타데이터: 남은 질문 큐 및 추출된 기능 목록
+        {"role": "ai", "content": json.dumps(ai_data, ensure_ascii=False), "turn": 1},
         {"role": "_meta", "content": "", "turn": 0,
-         "pending_questions": remaining_questions,
-         "total_questions": len(questions),
-         "answered_questions": [],
-         "features": features},
+         "tech_stack": tech_stack,
+         "selected_options": [],
+         "ambiguity_score": ai_data.get("ambiguity_score", 0)}
     ]
 
     # DB 저장
     user_flow = UserFlow(
         project_id=project_id,
-        title="기능 정의 및 인터뷰 진행 중",
+        title="제안형 인터뷰 진행 중",
         prd_context=combined_prd,
         interview_history=interview_history,
         session_status="interviewing",
@@ -259,17 +305,17 @@ async def start_userflow_session(
     db.add(user_flow)
     await db.flush()
 
-    logger.info(f"[Session] 세션 시작: flow_id={user_flow.id}, 질문 {len(questions)}개")
-
     return {
         "flow_id": user_flow.id,
         "project_id": project_id,
-        "session_status": "interviewing" if first_question else "ready_to_confirm",
+        "session_status": "interviewing",
         "current_turn": 1,
-        "max_turns": len(questions) + 1,
-        "ai_message": ai_message,
+        "max_turns": 6, # 가변적이지만 UI 표시용
+        "ai_message": ai_message_text,
+        "options": ai_data.get("options", []),
+        "ambiguity_score": ai_data.get("ambiguity_score", 0),
+        "is_ready": ai_data.get("is_ready", False),
         "interview_history": [h for h in interview_history if h.get("role") != "_meta"],
-        "user_flow": None,
     }
 
 
@@ -278,7 +324,7 @@ def _get_meta(history: list) -> dict:
     for h in history:
         if h.get("role") == "_meta":
             return h
-    return {"pending_questions": [], "total_questions": 0, "answered_questions": []}
+    return {"tech_stack": "Unknown", "selected_options": [], "ambiguity_score": 0}
 
 
 def _set_meta(history: list, meta: dict) -> list:
@@ -286,11 +332,15 @@ def _set_meta(history: list, meta: dict) -> list:
     new_history = [h for h in history if h.get("role") != "_meta"]
     new_history.append({
         "role": "_meta", "content": "", "turn": 0,
-        "pending_questions": meta.get("pending_questions", []),
-        "total_questions": meta.get("total_questions", 0),
-        "answered_questions": meta.get("answered_questions", []),
+        **meta
     })
     return new_history
+
+
+def _generate_interview_summary(selected_options: List[str]) -> str:
+    """선택된 옵션들을 결합하여 최종 요약 생성"""
+    summary = "\n".join([f"- {opt}" for opt in selected_options])
+    return f"🚀 [Ouroboros 사전 인터뷰 최종 요약]\n\n{summary}"
 
 
 async def handle_session_answer(
@@ -300,12 +350,7 @@ async def handle_session_answer(
     force_confirm: bool = False,
 ) -> dict:
     """
-    기획자 답변 처리: 다음 질문 전달 or 최종 유저 플로우 생성
-
-    로직:
-      1. 답변을 기록
-      2. 남은 질문이 있고 confirm이 아니면 → 다음 질문 반환
-      3. 남은 질문이 없거나 confirm이면 → _finalize_user_flow 호출
+    제안형 인터뷰 답변 처리 및 다음 턴 생성
     """
     from app.graph.userflow_graph import _finalize_user_flow
     from app.schemas.userflow import UserFlowResponse
@@ -318,40 +363,61 @@ async def handle_session_answer(
     history = user_flow.interview_history or []
     meta = _get_meta(history)
     current_turn = (user_flow.current_turn or 1) + 1
-
-    pending = meta.get("pending_questions", [])
-    total_q = meta.get("total_questions", 0)
-    answered = meta.get("answered_questions", [])
+    tech_stack = meta.get("tech_stack", "Spring Boot, React")
+    selected_options = meta.get("selected_options", [])
 
     # 사용자 답변 기록
     history.append({"role": "user", "content": user_answer, "turn": current_turn})
-    answered.append(user_answer)
+    selected_options.append(user_answer)
+    meta["selected_options"] = selected_options
 
-    # ── finalize 조건: confirm=True 또는 질문이 모두 소진됨 ──
-    if force_confirm or len(pending) == 0:
+    settings = get_settings()
+    llm = ChatOpenAI(model="gpt-4o", temperature=0.5, api_key=settings.openai_api_key)
+
+    # ── finalize 조건 체크 ──
+    # 이전 turn의 AI 응답에서 is_ready를 확인하거나 force_confirm인 경우
+    last_ai_msg = next((h for h in reversed(history) if h["role"] == "ai"), {})
+    last_ai_data = {}
+    try:
+        last_ai_data = json.loads(last_ai_msg.get("content", "{}"))
+    except:
+        pass
+
+    if force_confirm or last_ai_data.get("is_ready") or current_turn >= 7:
+        # 인터뷰 요약 생성
+        interview_summary = _generate_interview_summary(selected_options)
+        
+        # AI JSON 메시지를 사람이 읽을 수 있는 형태로 변환
+        readable_history = []
+        for h in history:
+            if h.get("role") == "_meta":
+                continue
+            if h["role"] == "ai":
+                try:
+                    ai_data_parsed = json.loads(h["content"])
+                    readable_history.append({
+                        "role": "ai",
+                        "content": ai_data_parsed.get("ai_reply", h["content"]),
+                        "turn": h.get("turn", 0),
+                    })
+                except (json.JSONDecodeError, TypeError):
+                    readable_history.append(h)
+            else:
+                readable_history.append(h)
+
+        # 유저 플로우 생성 호출
         result = await _finalize_user_flow(
             prd_text=user_flow.prd_context or "",
-            interview_history=[h for h in history if h.get("role") != "_meta"],
-            final_answer=user_answer,
+            interview_history=readable_history,
+            final_answer=interview_summary, # 요약본을 최종 입력으로 전달
         )
 
         history.append({"role": "ai", "content": result["message"], "turn": current_turn})
-        meta["pending_questions"] = []
-        meta["answered_questions"] = answered
-        history = _set_meta(history, meta)
-
-        # 유저 플로우 DAG 저장
-        flow_data = result["user_flow"]
-        logger.info(f"[DEBUG] Final flow data from AI: {flow_data}")
-        
-        if not flow_data.get("nodes"):
-            logger.warning("[DEBUG] No nodes found in AI response flow_data")
-            
-        user_flow.title = flow_data.get("title", "서비스 유저 플로우")
-        user_flow.interview_history = history
         user_flow.session_status = "completed"
-        user_flow.current_turn = current_turn
-
+        user_flow.title = result["user_flow"].get("title", "서비스 유저 플로우")
+        
+        # 유저 플로우 DAG 저장 로직 (기존과 동일)
+        flow_data = result["user_flow"]
         node_name_to_id = {}
         for idx, nd in enumerate(flow_data.get("nodes", [])):
             node = UserFlowNode(
@@ -375,33 +441,59 @@ async def handle_session_answer(
                     label=ed.get("label", ""),
                 ))
 
+        user_flow.interview_history = _set_meta(history, meta)
         await db.flush()
-        final_flow = await get_user_flow(db, flow_id)
-        # 헬퍼 함수를 통한 안전한 직렬화
-        flow_response = _serialize_flow(final_flow)
-
+        
+        # 새롭게 추가된 nodes/edges를 가져오기 위해 관계 새로고침
+        await db.refresh(user_flow, ["nodes", "edges"])
+        
         return {
             "flow_id": flow_id,
             "project_id": user_flow.project_id,
             "session_status": "completed",
             "current_turn": current_turn,
-            "max_turns": total_q + 1,
             "ai_message": result["message"],
             "interview_history": [h for h in history if h.get("role") != "_meta"],
-            "user_flow": flow_response,
+            "user_flow": _serialize_flow(user_flow),
         }
 
-    # ── 다음 질문 전달 ──
-    next_question = pending.pop(0)
-    q_index = total_q - len(pending)
-    ai_message = f"🗣️ **인터뷰 진행 ({q_index}/{total_q})**: {next_question}"
+    # ── 다음 제안 생성 (Layered Deep-Dive) ──
+    prompt = PROPOSAL_FIRST_SYSTEM_PROMPT.format(tech_stack=tech_stack)
+    messages = [SystemMessage(content=prompt)]
+    
+    # 전체 대화 컨텍스트 구성
+    for h in history:
+        if h["role"] == "user":
+            messages.append(HumanMessage(content=h["content"]))
+        elif h["role"] == "ai":
+            try:
+                # AI 메시지는 JSON 데이터에서 reply 부분만 추출하여 전달하거나 전체를 전달
+                msg_data = json.loads(h["content"])
+                messages.append(AIMessage(content=msg_data.get("ai_reply", h["content"])))
+            except:
+                messages.append(AIMessage(content=h["content"]))
 
-    history.append({"role": "ai", "content": ai_message, "turn": current_turn})
-    meta["pending_questions"] = pending
-    meta["answered_questions"] = answered
-    history = _set_meta(history, meta)
+    response = await llm.ainvoke(messages)
+    
+    try:
+        import re
+        content = response.content.strip()
+        json_match = re.search(r'\{.*\}', content, re.DOTALL)
+        if json_match:
+            content = json_match.group()
+        ai_data = json.loads(content)
+    except:
+        ai_data = {
+            "ai_reply": response.content,
+            "options": ["예, 계속 진행해주세요.", "다른 대안을 제안해주세요.", "직접 입력"],
+            "ambiguity_score": meta.get("ambiguity_score", 50),
+            "is_ready": False
+        }
 
-    user_flow.interview_history = history
+    history.append({"role": "ai", "content": json.dumps(ai_data, ensure_ascii=False), "turn": current_turn})
+    meta["ambiguity_score"] = ai_data.get("ambiguity_score", 0)
+    
+    user_flow.interview_history = _set_meta(history, meta)
     user_flow.current_turn = current_turn
     await db.flush()
 
@@ -410,10 +502,11 @@ async def handle_session_answer(
         "project_id": user_flow.project_id,
         "session_status": "interviewing",
         "current_turn": current_turn,
-        "max_turns": total_q + 1,
-        "ai_message": ai_message,
+        "ai_message": ai_data.get("ai_reply", ""),
+        "options": ai_data.get("options", []),
+        "ambiguity_score": ai_data.get("ambiguity_score", 0),
+        "is_ready": ai_data.get("is_ready", False),
         "interview_history": [h for h in history if h.get("role") != "_meta"],
-        "user_flow": None,
     }
 
 

@@ -40,6 +40,10 @@ from app.schemas.pipeline import (
     PipelineStepUpdate,
     PipelineStepResponse,
     PipelineV3Response,
+    PipelineV4Response,
+    V4StepItem,
+    V4WireframeItem,
+    V4ComponentItem,
     MeetingStepConfirmation,
 )
 from app.services import pipeline_service
@@ -506,6 +510,95 @@ async def generate_v3_pipeline(
 
 
 # ──────────────────────────────────────────────
+# V4 Multi-Agent Pipeline Generation
+# ──────────────────────────────────────────────
+
+@router.post(
+    "/generate-v4",
+    response_model=PipelineV4Response,
+    summary="V4 Multi-Agent 파이프라인 생성 (전문가 협업) → DB 저장",
+    description=(
+        "Multi-Agent LangGraph Workflow를 활용한 파이프라인 생성입니다.\n\n"
+        "**Flow**: parse_document → requirement_refiner → Flow_Planner → UX_Architect\n"
+        "  → [BE_Specialist ∥ FE_Specialist] (병렬) → Cross-Validator → Finalize\n\n"
+        "각 에이전트의 전문성에 기반하여 User Flow, ASCII Wireframe, BE/FE 이슈를 분리 생성합니다."
+    ),
+)
+async def generate_v4_pipeline(
+    project_id: int = Form(..., description="Spring DB의 project ID (Logical FK)"),
+    requirements: str = Form(..., description="기획자 요구사항 텍스트"),
+    tech_stack: Optional[str] = Form(None, description="기술 스택 (예: 'Spring Boot, JPA | React, TypeScript')"),
+    file: Optional[UploadFile] = File(None, description="PRD PDF 파일 (선택)"),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.graph.pipeline_graph_v4 import pipeline_graph_v4
+
+    # PDF 바이트 읽기
+    pdf_bytes: Optional[bytes] = None
+    if file is not None:
+        logger.info(f"[generate_v4] 파일 수신: {file.filename}")
+        if not file.filename.endswith(".pdf"):
+            raise HTTPException(status_code=400, detail="PDF 파일만 업로드 가능합니다.")
+        pdf_bytes = await file.read()
+        logger.info(f"[generate_v4] PDF 읽기 완료: {len(pdf_bytes)} bytes")
+
+    # V4 그래프 실행
+    try:
+        result = await pipeline_graph_v4.ainvoke({
+            "prd_context": requirements,
+            "technical_stack": tech_stack or "Spring Boot, JPA | React, TypeScript",
+            "category": "FULL",
+            "pdf_bytes": pdf_bytes,
+            "interview_summary": "",
+            "pdf_content": "",
+            "refined_requirements": "",
+            "user_flow": {},
+            "user_flow_mermaid": "",
+            "wireframes": [],
+            "component_tree": [],
+            "be_steps": [],
+            "fe_steps": [],
+            "validation_logs": [],
+            "final_pipeline": [],
+        }, config={"recursion_limit": 1000})
+    except Exception as e:
+        logger.error(f"V4 파이프라인 생성 실패: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"V4 Multi-Agent 파이프라인 생성 중 오류: {str(e)}",
+        )
+
+    pipeline_items = result.get("final_pipeline", [])
+    if not pipeline_items:
+        raise HTTPException(
+            status_code=500,
+            detail="AI가 파이프라인 아이템을 생성하지 못했습니다.",
+        )
+
+    # DB 저장
+    pipeline = await pipeline_service.save_ai_pipeline_to_db(
+        db, project_id, pipeline_items, "FULL", tech_stack
+    )
+
+    # V4 enriched response 조합
+    return PipelineV4Response(
+        id=pipeline.id,
+        project_id=pipeline.project_id,
+        category=pipeline.category,
+        version=pipeline.version,
+        tech_stack=pipeline.tech_stack,
+        steps=[s for s in pipeline.steps],
+        user_flow=result.get("user_flow"),
+        user_flow_mermaid=result.get("user_flow_mermaid"),
+        wireframes=[V4WireframeItem(**w) for w in result.get("wireframes", [])],
+        component_tree=[V4ComponentItem(**c) for c in result.get("component_tree", [])],
+        be_steps=[V4StepItem(**s) for s in result.get("be_steps", [])],
+        fe_steps=[V4StepItem(**s) for s in result.get("fe_steps", [])],
+        validation_logs=result.get("validation_logs", []),
+    )
+
+
+# ──────────────────────────────────────────────
 # Stage 1: PRD → 인터뷰 세션 기반 유저 플로우 생성
 # ──────────────────────────────────────────────
 
@@ -524,6 +617,7 @@ async def generate_v3_pipeline(
 async def generate_userflow(
     project_id: int = Form(..., description="Spring DB의 project ID (Logical FK)"),
     requirements: str = Form(..., description="기획자 요구사항 텍스트 (PRD)"),
+    tech_stack: Optional[str] = Form("Spring Boot, React", description="사용할 기술 스택"),
     file: Optional[UploadFile] = File(None, description="PRD PDF 파일 (선택)"),
     db: AsyncSession = Depends(get_db),
 ):
@@ -538,7 +632,7 @@ async def generate_userflow(
 
     try:
         result = await userflow_service.start_userflow_session(
-            db, project_id, requirements, pdf_bytes
+            db, project_id, requirements, pdf_bytes, tech_stack=tech_stack
         )
         return result
     except Exception as e:

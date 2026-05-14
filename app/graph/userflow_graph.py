@@ -252,6 +252,7 @@ async def _finalize_user_flow(
 
     try:
         result = _extract_json(response.content)
+        print(f"[DEBUG _finalize_user_flow] LLM Raw Response:\n{response.content}\n")
         logger.info(
             f"[_finalize_user_flow] 최종 생성: 노드 {len(result.get('nodes', []))}개, "
             f"엣지 {len(result.get('edges', []))}개"
@@ -263,6 +264,7 @@ async def _finalize_user_flow(
         }
     except Exception as e:
         logger.error(f"[_finalize_user_flow] JSON 파싱 에러: {e}")
+        print(f"[DEBUG _finalize_user_flow ERROR] LLM Raw Response:\n{response.content}\n")
         raise ValueError(f"유저 플로우 최종 생성 실패: {e}")
 
 
