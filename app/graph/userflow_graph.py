@@ -442,6 +442,9 @@ async def generate_pipeline_from_flow(
     system_prompt = (
         f"🚀 FitHub AI: {category} 전문 파이프라인 설계 엔진\n"
         f"## ⚠️ 직군 격리 지침\n{scope_constraint}\n\n"
+        f"## ⚠️ 기술 스택 준수 지침 (매우 중요)\n"
+        f"반드시 입력으로 주어진 기술 스택인 **'{tech_stack}'**에 부합하는 실제 기술들(예: Next.js, FastAPI, Express 등)을 사용하여 "
+        f"모든 태스크의 세부 내용과 'tech_stack' 리스트를 출력해야 합니다. 예시(사용 기술 등)에 현혹되지 말고 반드시 입력된 기술 스택에 매핑되는 실제 기술들을 적용하십시오.\n\n"
 
         "## 📋 핵심 원칙: 유저 플로우 기반 버티컬 슬라이스\n"
         "1. 제공된 **유저 플로우 DAG**와 **ASCII 와이어프레임**을 분석하세요.\n"

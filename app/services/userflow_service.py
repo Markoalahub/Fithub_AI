@@ -654,6 +654,13 @@ async def generate_and_save_pipeline_from_flow(
     # 유저 플로우 조회
     user_flow = await get_user_flow(db, flow_id)
 
+    # 온보딩/인터뷰에서 기획자(개발자)가 입력한 기술 스택 정보가 있으면 이를 우선 사용
+    if not tech_stack or tech_stack == "최적 스택":
+        meta = _get_meta(user_flow.interview_history or [])
+        flow_tech_stack = meta.get("tech_stack")
+        if flow_tech_stack and flow_tech_stack != "Unknown":
+            tech_stack = flow_tech_stack
+
     # 노드 데이터 (와이어프레임 포함)
     nodes_data = [
         {

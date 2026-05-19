@@ -331,12 +331,18 @@ def be_specialist(state: PipelineStateV4) -> dict:
     user_flow = state.get("user_flow", {})
     tech = state.get("technical_stack", "Spring Boot, JPA")
 
+    # 입력된 기술 스택(tech)을 반드시 준수하도록 시스템 프롬프트 동적 보강
+    system_prompt = BE_SPECIALIST_PROMPT.replace(
+        "## 핵심 지침\n",
+        f"## 핵심 지침\n6. ⚠️ **기술 스택 준수 지침 (필수)**: 반드시 입력으로 지정된 기술 스택인 **'{tech}'**을 완벽히 반영하여 모든 태스크의 세부 내용(DB 테이블 설계, ORM 사용법, 사용하는 라이브러리/프레임워크 등)과 'tech_stack' 리스트를 출력해야 합니다. 예시의 'Spring Boot, JPA'는 단지 예시일 뿐이므로, 반드시 지정된 기술 스택에 어울리는 최적의 설계(예: FastAPI, Next.js, Node.js 등)를 적용하여 구체적이고 전문적인 태스크를 도출해야 합니다.\n"
+    )
+
     user_msg = (
         f"기술 스택: {tech}\n\n"
         f"<USER_FLOW>\n{json.dumps(user_flow, ensure_ascii=False, indent=2)}\n</USER_FLOW>"
     )
     result = _invoke_json(llm, [
-        SystemMessage(content=BE_SPECIALIST_PROMPT),
+        SystemMessage(content=system_prompt),
         HumanMessage(content=user_msg),
     ])
 
@@ -409,6 +415,12 @@ def fe_specialist(state: PipelineStateV4) -> dict:
     component_tree = state.get("component_tree", [])
     tech = state.get("technical_stack", "React, TypeScript")
 
+    # 입력된 기술 스택(tech)을 반드시 준수하도록 시스템 프롬프트 동적 보강
+    system_prompt = FE_SPECIALIST_PROMPT.replace(
+        "## 핵심 지침\n",
+        f"## 핵심 지침\n6. ⚠️ **기술 스택 준수 지침 (필수)**: 반드시 입력으로 지정된 기술 스택인 **'{tech}'**을 완벽히 반영하여 모든 태스크의 세부 내용(상태 관리 전역 Store 구성, 사용하는 UI 라이브러리/프레임워크 등)과 'tech_stack' 리스트를 출력해야 합니다. 예시의 'React, TypeScript'는 단지 예시일 뿐이므로, 반드시 지정된 기술 스택에 어울리는 최적의 설계(예: Vue, Next.js, Flutter 등)를 적용하여 구체적이고 전문적인 태스크를 도출해야 합니다.\n"
+    )
+
     user_msg = (
         f"기술 스택: {tech}\n\n"
         f"<USER_FLOW>\n{json.dumps(user_flow, ensure_ascii=False, indent=2)}\n</USER_FLOW>\n\n"
@@ -416,7 +428,7 @@ def fe_specialist(state: PipelineStateV4) -> dict:
         f"<COMPONENT_TREE>\n{json.dumps(component_tree, ensure_ascii=False, indent=2)}\n</COMPONENT_TREE>"
     )
     result = _invoke_json(llm, [
-        SystemMessage(content=FE_SPECIALIST_PROMPT),
+        SystemMessage(content=system_prompt),
         HumanMessage(content=user_msg),
     ])
 
