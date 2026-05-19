@@ -15,3 +15,16 @@ openapi.json
 # MSA Architecture Docs
 MSA_DATABASE_ARCHITECTURE.md
 MSA_DBML.dbml
+
+# PDF Files
+*.pdf
+
+# Test Results & Temp Scripts
+detailed_*.md
+detailed_*.json
+extract_details.py
+format_markdown.py
+full_pipeline_results.json
+generate_stages.py
+test_result*.md
+test_result*.json

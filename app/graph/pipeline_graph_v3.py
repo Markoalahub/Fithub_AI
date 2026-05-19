@@ -119,6 +119,11 @@ def domain_decomposer(state: AgentState) -> dict:
     system_prompt = (
         f"🚀 FitHub AI: {category} 전문 파이프라인 설계 엔진\n"
         f"## ⚠️ 직군 격리 지침\n{scope_constraint}\n\n"
+        f"## ⚠️ 기술 스택 준수 지침 (매우 중요)\n"
+        f"반드시 입력으로 주어진 기술 스택 **({tech_stack})**을 기반으로 모든 태스크를 작성하십시오. "
+        f"출력 가이드나 예시(Spring Boot 등)에 현혹되지 말고, 실제로 지정된 기술 스택에 완벽하게 일치하는 기술들(예: Next.js, FastAPI, Express, NestJS 등)을 사용하여 "
+        f"DB 스키마 설계, API 구현, 비즈니스 로직 작성 및 테스트 태스크를 생성해야 하며, "
+        f"각 스텝의 'tech_stack' 필드에도 이 기술 스택을 구성하는 실제 세부 기술명을 리스트로 포함시키십시오.\n\n"
         "## 💡 설계 원칙: Atomic Task 분해 (매우 중요)\n"
         "1. 제공된 기획(PRD) 및 요구사항을 기반으로 시스템을 구축하기 위한 모든 작업 단위를 도출하십시오.\n"
         "2. **[정보 통합 지침]**: 제공된 정보는 두 가지 섹션으로 구성됩니다.\n"
