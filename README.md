@@ -101,7 +101,6 @@ uvicorn app.main:app --reload --port 8000
 ```
 
 ## Phase 2 (예정)
-
 - 기획자·개발자 컨펌 UI
 - Fithub Spring Boot 연동 (OpenFeign)
 - 파이프라인 아이템 → GitHub Issue 자동 생성
