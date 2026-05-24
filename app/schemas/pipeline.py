@@ -76,9 +76,7 @@ class PipelineStepResponse(BaseModel):
     step_confirmation_date: Optional[datetime] = None
     step_final_confirmed_status: str  # 계산 필드: Confirmed | Pending
     duration: Optional[str] = None
-    tech_stack: Optional[str] = None
     origin: Optional[str] = None
-    priority: int
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
