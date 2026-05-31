@@ -1,4 +1,6 @@
 .env
+.claude/
+CLAUDE.md
 __pycache__/
 *.pyc
 *.pyo
@@ -10,6 +12,8 @@ venv/
 .pytest_cache/
 
 *.db
+*.db.bak_*
+*.db-*
 openapi.json
 
 # MSA Architecture Docs
@@ -28,3 +32,8 @@ full_pipeline_results.json
 generate_stages.py
 test_result*.md
 test_result*.json
+*_pipeline_results.md
+*_results.json
+/run_pipeline_test.py
+/test_*.py
+/swagger_api_spec.md
