@@ -9,7 +9,7 @@ Request/Response DTO — ORM ↔ API 경계 분리
 - Step_Confirmation_Date: 양측 승인 완료 날짜
 """
 from pydantic import BaseModel, Field, ConfigDict
-from typing import Any, List, Optional
+from typing import List, Optional
 from datetime import datetime, date, time
 
 
@@ -149,51 +149,3 @@ class PipelineV3Response(BaseModel):
     tech_stack: Optional[str] = None
     feats: List[PipelineFeatV3Response] = Field(default_factory=list, validation_alias="steps")
 
-
-# ──────────────────────────────────────────────
-# V4 Multi-Agent Response
-# ──────────────────────────────────────────────
-
-class V4StepItem(BaseModel):
-    """V4 개별 스텝 (BE/FE 공통)"""
-    title: str
-    details: List[str] = []
-    category: Optional[str] = None
-    priority: int = 1
-    tech_stack: List[str] = []
-    depends_on: List[Any] = []
-
-class V4WireframeItem(BaseModel):
-    """V4 ASCII 와이어프레임"""
-    screen_id: str = ""
-    screen_name: str = ""
-    ascii_wireframe: str = ""
-    related_flow_nodes: str = ""
-
-class V4ComponentItem(BaseModel):
-    """V4 컴포넌트 트리 항목"""
-    screen_id: str = ""
-    name: str = ""
-    type: str = ""
-    children: List[str] = []
-
-class PipelineV4Response(BaseModel):
-    """V4 Multi-Agent 파이프라인 전체 응답"""
-    model_config = ConfigDict(from_attributes=True)
-
-    # DB 저장된 파이프라인 (기존 호환)
-    id: int
-    project_id: int
-    category: Optional[str] = None
-    version: int
-    tech_stack: Optional[str] = None
-    steps: List[PipelineFeatV3Response] = []
-
-    # V4 추가 메타데이터
-    user_flow: Optional[dict] = None
-    user_flow_mermaid: Optional[str] = None
-    wireframes: List[V4WireframeItem] = []
-    component_tree: List[V4ComponentItem] = []
-    be_steps: List[V4StepItem] = []
-    fe_steps: List[V4StepItem] = []
-    validation_logs: List[str] = []

@@ -9,7 +9,7 @@ from app.routers.pipeline import router as legacy_pipeline_router
 from app.routers.pipeline_router import router as pipeline_router
 from app.routers.meeting_router import router as meeting_router
 from app.routers.translation_router import router as translation_router
-from app.routers.userflow_router import router as userflow_router
+from app.routers.internal_router import router as internal_router
 
 # Langsmith 초기화
 init_langsmith()
@@ -20,7 +20,6 @@ async def lifespan(app: FastAPI):
     """앱 시작 시 DB 테이블 자동 생성"""
     # ORM 모델 import → Base.metadata에 등록
     import app.models.db  # noqa: F401
-    import app.models.db.userflow  # noqa: F401
     await init_db()
     yield
 
@@ -54,8 +53,8 @@ app.add_middleware(
 # 라우터 등록
 app.include_router(legacy_pipeline_router)  # 기존 /pipeline/generate (하위 호환)
 app.include_router(pipeline_router)         # 신규 /pipelines/** CRUD
+app.include_router(internal_router)         # Spring outbox worker 전용 내부 API
 app.include_router(translation_router)      # 신규 /meetings/search, /meetings/{id}/translate** 번역
-app.include_router(userflow_router)         # 신규 /userflow/** CRUD
 app.include_router(meeting_router)          # 신규 /meetings/** CRUD (마지막에 등록해야 /{id} 패턴이 후순위)
 
 
