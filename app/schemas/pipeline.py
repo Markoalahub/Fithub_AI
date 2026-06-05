@@ -124,6 +124,20 @@ class PipelineListResponse(BaseModel):
     total: int
 
 
+class PipelineSummaryResponse(BaseModel):
+    """프로젝트 파이프라인 요약 응답"""
+    pipe_id: int
+    pipeline_name: str
+    category: Optional[str] = None
+
+
+class PipelineSummaryListResponse(BaseModel):
+    """프로젝트 파이프라인 요약 목록 응답"""
+    project_id: int
+    pipelines: List[PipelineSummaryResponse]
+    total: int
+
+
 # ──────────────────────────────────────────────
 # V3 Specialized (Slim)
 # ──────────────────────────────────────────────
@@ -149,3 +163,8 @@ class PipelineV3Response(BaseModel):
     tech_stack: Optional[str] = None
     feats: List[PipelineFeatV3Response] = Field(default_factory=list, validation_alias="steps")
 
+
+class PipelineV3ListResponse(BaseModel):
+    """V3 파이프라인 목록 응답"""
+    pipelines: List[PipelineV3Response]
+    total: int
