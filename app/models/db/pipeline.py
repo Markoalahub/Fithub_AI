@@ -38,6 +38,13 @@ class Pipeline(Base):
     version = Column(Integer, nullable=False, default=1)
     is_active = Column(String(10), nullable=False, default="Active", comment="Active | Inactive")
     tech_stack = Column(String(200), nullable=True, comment="해당 파이프라인 전체 기술 스택")
+    github_repo_url = Column(
+        String(500),
+        nullable=True,
+        unique=True,
+        index=True,
+        comment="일대일로 연결된 GitHub repository URL",
+    )
 
     # Relationships
     steps = relationship(

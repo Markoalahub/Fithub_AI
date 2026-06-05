@@ -4,6 +4,7 @@ Pipeline Service — CRUD + AI 파이프라인 생성 후 DB 저장
 from typing import List, Optional
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from fastapi import HTTPException
@@ -31,6 +32,7 @@ async def create_pipeline(
         version=data.version,
         is_active=data.is_active,
         tech_stack=data.tech_stack,
+        github_repo_url=data.github_repo_url,
     )
     db.add(pipeline)
     await db.flush()  # id 확보
@@ -137,6 +139,25 @@ async def update_pipeline(
     for key, value in update_data.items():
         setattr(pipeline, key, value)
     await db.flush()
+    return pipeline
+
+
+async def update_pipeline_github_repository_url(
+    db: AsyncSession,
+    pipeline_id: int,
+    github_repo_url: str,
+) -> Pipeline:
+    """파이프라인에 GitHub repository URL을 일대일로 연결"""
+    pipeline = await get_pipeline(db, pipeline_id)
+    pipeline.github_repo_url = github_repo_url.strip()
+    try:
+        await db.flush()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="이미 다른 파이프라인에 연결된 GitHub 레포 URL입니다.",
+        ) from exc
     return pipeline
 
 

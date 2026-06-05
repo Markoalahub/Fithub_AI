@@ -22,7 +22,7 @@ import os
 from typing import Optional, List, Any, Dict, Union
 import json
 
-from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException
+from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, Path
 from sqlalchemy.ext.asyncio import AsyncSession
 from docling.document_converter import DocumentConverter
 from pydantic import BaseModel
@@ -33,6 +33,7 @@ from app.database import get_db
 from app.config import get_settings
 from app.schemas.pipeline import (
     PipelineCreate,
+    PipelineGithubRepositoryUpdate,
     PipelineUpdate,
     PipelineResponse,
     PipelineListResponse,
@@ -181,6 +182,32 @@ async def update_pipeline(
     db: AsyncSession = Depends(get_db),
 ):
     return await pipeline_service.update_pipeline(db, pipeline_id, data)
+
+
+@router.patch(
+    "/{pipeline_id}/github-repository",
+    response_model=PipelineResponse,
+    summary="파이프라인 GitHub repository URL 연결",
+    description=(
+        "특정 파이프라인의 GitHub repository URL만 부분 수정합니다. "
+        "하나의 GitHub repository URL은 하나의 파이프라인에만 연결됩니다."
+    ),
+    response_description="GitHub repository URL이 연결된 파이프라인",
+    responses={
+        404: {"description": "파이프라인을 찾을 수 없음"},
+        409: {"description": "이미 다른 파이프라인에 연결된 GitHub repository URL"},
+    },
+)
+async def update_pipeline_github_repository(
+    data: PipelineGithubRepositoryUpdate,
+    pipeline_id: int = Path(..., description="GitHub repository URL을 연결할 파이프라인 ID", examples=[33]),
+    db: AsyncSession = Depends(get_db),
+):
+    return await pipeline_service.update_pipeline_github_repository_url(
+        db,
+        pipeline_id,
+        data.github_repo_url,
+    )
 
 
 @router.delete(

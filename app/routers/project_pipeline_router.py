@@ -37,6 +37,7 @@ async def get_project_pipelines(
                 pipe_id=pipeline.id,
                 pipeline_name=f"{pipeline.category or 'UNKNOWN'} 파이프라인 {pipeline.id}",
                 category=pipeline.category,
+                github_repo_url=pipeline.github_repo_url,
             )
             for pipeline in pipelines
         ]
