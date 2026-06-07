@@ -8,7 +8,7 @@ Request/Response DTO — ORM ↔ API 경계 분리
 - Step_Final_Confirmed_Status: 양측 모두 승인 시 'Confirmed'
 - Step_Confirmation_Date: 양측 승인 완료 날짜
 """
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 from typing import List, Optional
 from datetime import datetime, date, time
 
@@ -92,6 +92,7 @@ class PipelineCreate(BaseModel):
     version: int = Field(1, ge=1, description="버전")
     is_active: str = Field("Active", description="Active | Inactive")
     tech_stack: Optional[str] = Field(None, max_length=200, description="기술 스택")
+    github_repo_url: Optional[str] = Field(None, max_length=500, description="연결된 GitHub repository URL")
     steps: Optional[List[PipelineStepCreate]] = Field(
         None, description="함께 생성할 스텝 목록 (선택)"
     )
@@ -105,6 +106,27 @@ class PipelineUpdate(BaseModel):
     tech_stack: Optional[str] = None
 
 
+class PipelineGithubRepositoryUpdate(BaseModel):
+    """파이프라인 GitHub repository 연결 요청"""
+    github_repo_url: str = Field(
+        ...,
+        min_length=1,
+        max_length=500,
+        description="파이프라인과 일대일로 연결할 GitHub repository URL",
+        examples=["https://github.com/Markoalahub/Fithub_BE"],
+    )
+
+    @field_validator("github_repo_url")
+    @classmethod
+    def validate_github_repo_url(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("GitHub repository URL은 비어 있을 수 없습니다.")
+        if not stripped.startswith(("http://", "https://")):
+            raise ValueError("GitHub repository URL은 http:// 또는 https://로 시작해야 합니다.")
+        return stripped
+
+
 class PipelineResponse(BaseModel):
     """파이프라인 응답"""
     model_config = ConfigDict(from_attributes=True)
@@ -115,12 +137,28 @@ class PipelineResponse(BaseModel):
     version: int
     is_active: str
     tech_stack: Optional[str] = None
+    github_repo_url: Optional[str] = None
     steps: List[PipelineStepResponse] = []
 
 
 class PipelineListResponse(BaseModel):
     """파이프라인 목록 응답"""
     pipelines: List[PipelineResponse]
+    total: int
+
+
+class PipelineSummaryResponse(BaseModel):
+    """프로젝트 파이프라인 요약 응답"""
+    pipe_id: int
+    pipeline_name: str
+    category: Optional[str] = None
+    github_repo_url: Optional[str] = None
+
+
+class PipelineSummaryListResponse(BaseModel):
+    """프로젝트 파이프라인 요약 목록 응답"""
+    project_id: int
+    pipelines: List[PipelineSummaryResponse]
     total: int
 
 
@@ -147,5 +185,11 @@ class PipelineV3Response(BaseModel):
     category: Optional[str] = None
     version: int
     tech_stack: Optional[str] = None
+    github_repo_url: Optional[str] = None
     feats: List[PipelineFeatV3Response] = Field(default_factory=list, validation_alias="steps")
 
+
+class PipelineV3ListResponse(BaseModel):
+    """V3 파이프라인 목록 응답"""
+    pipelines: List[PipelineV3Response]
+    total: int

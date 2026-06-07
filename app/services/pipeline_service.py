@@ -3,7 +3,8 @@ Pipeline Service — CRUD + AI 파이프라인 생성 후 DB 저장
 """
 from typing import List, Optional
 
-from sqlalchemy import select
+from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from fastapi import HTTPException
@@ -31,6 +32,7 @@ async def create_pipeline(
         version=data.version,
         is_active=data.is_active,
         tech_stack=data.tech_stack,
+        github_repo_url=data.github_repo_url,
     )
     db.add(pipeline)
     await db.flush()  # id 확보
@@ -88,6 +90,46 @@ async def get_pipelines_by_project(
     return list(result.scalars().all())
 
 
+async def get_pipeline_summaries_by_project(
+    db: AsyncSession, project_id: int
+) -> List[Pipeline]:
+    """프로젝트별 파이프라인 요약 목록 조회"""
+    result = await db.execute(
+        select(Pipeline)
+        .where(Pipeline.project_id == project_id)
+        .order_by(
+            Pipeline.category.asc(),
+            Pipeline.version.desc(),
+            Pipeline.id.desc(),
+        )
+    )
+    return list(result.scalars().all())
+
+
+async def get_latest_pipeline_by_project_and_category(
+    db: AsyncSession, project_id: int, category: str
+) -> Pipeline:
+    """프로젝트 + 카테고리 기준 최신 파이프라인 조회"""
+    normalized_category = category.strip().upper()
+    result = await db.execute(
+        select(Pipeline)
+        .options(selectinload(Pipeline.steps))
+        .where(
+            Pipeline.project_id == project_id,
+            func.upper(Pipeline.category) == normalized_category,
+        )
+        .order_by(Pipeline.version.desc(), Pipeline.id.desc())
+        .limit(1)
+    )
+    pipeline = result.scalar_one_or_none()
+    if pipeline is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"{normalized_category} 카테고리의 파이프라인을 찾을 수 없습니다.",
+        )
+    return pipeline
+
+
 async def update_pipeline(
     db: AsyncSession, pipeline_id: int, data: PipelineUpdate
 ) -> Pipeline:
@@ -97,6 +139,25 @@ async def update_pipeline(
     for key, value in update_data.items():
         setattr(pipeline, key, value)
     await db.flush()
+    return pipeline
+
+
+async def update_pipeline_github_repository_url(
+    db: AsyncSession,
+    pipeline_id: int,
+    github_repo_url: str,
+) -> Pipeline:
+    """파이프라인에 GitHub repository URL을 일대일로 연결"""
+    pipeline = await get_pipeline(db, pipeline_id)
+    pipeline.github_repo_url = github_repo_url.strip()
+    try:
+        await db.flush()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="이미 다른 파이프라인에 연결된 GitHub 레포 URL입니다.",
+        ) from exc
     return pipeline
 
 
@@ -236,23 +297,33 @@ async def save_ai_pipeline_to_db(
 ) -> Pipeline:
     """
     LangGraph가 생성한 PipelineItem 리스트를 DB에 저장.
-    - 기존 활성 파이프라인을 비활성화
-    - 새 파이프라인 버전 생성
+    - 같은 프로젝트/카테고리의 기존 활성 파이프라인을 비활성화
+    - 같은 프로젝트/카테고리 기준 새 파이프라인 버전 생성
     """
+    normalized_category = category.strip().upper() if category else None
+
     # 기존 active 파이프라인 비활성화
+    active_filters = [
+        Pipeline.project_id == project_id,
+        Pipeline.is_active == "Active",
+    ]
+    if normalized_category:
+        active_filters.append(func.upper(Pipeline.category) == normalized_category)
+
     existing = await db.execute(
-        select(Pipeline).where(
-            Pipeline.project_id == project_id,
-            Pipeline.is_active == "Active",
-        )
+        select(Pipeline).where(*active_filters)
     )
     for pipeline in existing.scalars().all():
         pipeline.is_active = "Inactive"
 
     # 최신 버전 번호 조회
+    version_filters = [Pipeline.project_id == project_id]
+    if normalized_category:
+        version_filters.append(func.upper(Pipeline.category) == normalized_category)
+
     version_result = await db.execute(
         select(Pipeline.version)
-        .where(Pipeline.project_id == project_id)
+        .where(*version_filters)
         .order_by(Pipeline.version.desc())
         .limit(1)
     )

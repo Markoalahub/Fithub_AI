@@ -10,6 +10,7 @@ from app.routers.pipeline_router import router as pipeline_router
 from app.routers.meeting_router import router as meeting_router
 from app.routers.translation_router import router as translation_router
 from app.routers.internal_router import router as internal_router
+from app.routers.project_pipeline_router import router as project_pipeline_router
 
 # Langsmith 초기화
 init_langsmith()
@@ -53,6 +54,7 @@ app.add_middleware(
 # 라우터 등록
 app.include_router(legacy_pipeline_router)  # 기존 /pipeline/generate (하위 호환)
 app.include_router(pipeline_router)         # 신규 /pipelines/** CRUD
+app.include_router(project_pipeline_router) # Spring 연동용 /projects/{id}/pipelines 조회
 app.include_router(internal_router)         # Spring outbox worker 전용 내부 API
 app.include_router(translation_router)      # 신규 /meetings/search, /meetings/{id}/translate** 번역
 app.include_router(meeting_router)          # 신규 /meetings/** CRUD (마지막에 등록해야 /{id} 패턴이 후순위)
