@@ -124,7 +124,6 @@ class PipelineStep(Base):
         cascade="all, delete-orphan",
         lazy="selectin",
     )
-
     def __repr__(self) -> str:
         return f"<PipelineStep(id={self.id}, seq={self.step_sequence_number}, status={self.step_final_confirmed_status})>"
 

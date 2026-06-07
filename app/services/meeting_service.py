@@ -47,6 +47,11 @@ async def create_meeting_log(
     meeting = MeetingLog(
         project_id=data.project_id,
         content=data.content,
+        meeting_log_content=data.meeting_log_content,
+        ai_translated_explanation=data.ai_translated_explanation,
+        is_translation_session=data.is_translation_session,
+        conversation_type=data.conversation_type,
+        translation_history=data.translation_history,
     )
     db.add(meeting)
     await db.flush()

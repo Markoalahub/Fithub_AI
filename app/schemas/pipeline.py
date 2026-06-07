@@ -76,9 +76,7 @@ class PipelineStepResponse(BaseModel):
     step_confirmation_date: Optional[datetime] = None
     step_final_confirmed_status: str  # 계산 필드: Confirmed | Pending
     duration: Optional[str] = None
-    tech_stack: Optional[str] = None
     origin: Optional[str] = None
-    priority: int
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -130,29 +128,24 @@ class PipelineListResponse(BaseModel):
 # V3 Specialized (Slim)
 # ──────────────────────────────────────────────
 
-class PipelineStepV3Response(BaseModel):
-    """V3 최적화 스텝 응답 (불필요한 필드 제거)"""
-    model_config = ConfigDict(from_attributes=True)
+class PipelineFeatV3Response(BaseModel):
+    """V3 최적화 스텝(Feat) 응답 (불필요한 필드 제거)"""
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
-    id: int
-    step_task_description: str
-    step_details: Optional[List[str]] = None
-    category: Optional[str] = None
-    step_sequence_number: int
+    feat_id: int = Field(validation_alias="id")
+    feat_title: str = Field(validation_alias="step_task_description")
+    feat_details: Optional[List[str]] = Field(None, validation_alias="step_details")
     priority: int
-    deadline_date: Optional[date] = None
-    deadline_time: Optional[time] = None
-    tech_stack: Optional[List[str]] = None
-    depends_on: Optional[List[int]] = None
 
 
 class PipelineV3Response(BaseModel):
     """V3 최적화 파이프라인 응답 (불필요한 필드 제거)"""
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
-    id: int
+    pipe_id: int = Field(validation_alias="id")
     project_id: int
     category: Optional[str] = None
     version: int
     tech_stack: Optional[str] = None
-    steps: List[PipelineStepV3Response] = []
+    feats: List[PipelineFeatV3Response] = Field(default_factory=list, validation_alias="steps")
+

@@ -14,17 +14,23 @@ Pipeline Router — REST API
 
   POST   /pipelines/generate-and-save   → AI 생성 + DB 저장 (기본)
   POST   /pipelines/generate-2pass      → 2-Pass AI 생성 + DB 저장
+  POST   /pipelines/interview           → Ouroboros 사전 인터뷰
 """
 import logging
 import tempfile
 import os
-from typing import Optional
+from typing import Optional, List, Any, Dict
+import json
 
 from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from docling.document_converter import DocumentConverter
+from pydantic import BaseModel
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 
 from app.database import get_db
+from app.config import get_settings
 from app.schemas.pipeline import (
     PipelineCreate,
     PipelineUpdate,
@@ -34,6 +40,7 @@ from app.schemas.pipeline import (
     PipelineStepUpdate,
     PipelineStepResponse,
     PipelineV3Response,
+    MeetingStepConfirmation,
 )
 from app.services import pipeline_service
 from app.services import two_pass_pipeline_service
@@ -43,6 +50,79 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/pipelines", tags=["Pipelines"])
 
+class InterviewRequest(BaseModel):
+    user_message: str
+    chat_history: List[Dict[str, str]] = [] # [{"role": "user"|"ai", "content": "..."}]
+    context: str = ""
+
+@router.post("/interview", summary="Ouroboros 사전 인터뷰")
+async def ouroboros_interview(request: InterviewRequest):
+    settings = get_settings()
+    llm = ChatOpenAI(model="gpt-4o", temperature=0.5, api_key=settings.openai_api_key)
+    
+    system_prompt = (
+        "당신은 Ouroboros 인터뷰어이자 수석 소프트웨어 아키텍트입니다.\n"
+        "당신의 목표는 사용자가 제공한 기획 내용(Context)을 바탕으로, 개발 파이프라인을 짤 때 필요한 핵심 디테일을 '역질문'하여 끌어내는 것입니다.\n\n"
+        "## 💡 인터뷰 지침\n"
+        "- 한 번에 하나의 날카로운 질문만 던지세요.\n"
+        "- 사용자에게 정답을 주입하지 말고, 스스로 생각하게 유도하세요 (소크라테스식 문답).\n\n"
+        "## 💡 모호성 측정 (Ambiguity Scoring)\n"
+        "- 현재까지의 요구사항 및 대화 내역이 '정밀한 개발 파이프라인을 구축하기에 충분한가'를 0~100점 사이로 측정하세요.\n"
+        "- 80점 이상이면 대화를 종료해도 좋은 수준으로 간주합니다.\n\n"
+        "## 💡 출력 가이드 (Strict JSON)\n"
+        "반드시 아래 JSON 형식으로만 응답하세요.\n"
+        "{\n"
+        "  \"ai_reply\": \"사용자에게 던질 질문\",\n"
+        "  \"options\": [\"추천 답변 선지 1\", \"추천 답변 선지 2\", \"추천 답변 선지 3\"],\n"
+        "  \"ambiguity_score\": 85,\n"
+        "  \"is_ready\": true\n"
+        "}"
+    )
+    
+    messages = [SystemMessage(content=system_prompt)]
+    if request.context:
+        messages.append(SystemMessage(content=f"<PRD_CONTEXT>\n{request.context}\n</PRD_CONTEXT>"))
+        
+    for chat in request.chat_history:
+        if chat["role"] == "user":
+            messages.append(HumanMessage(content=chat["content"]))
+        else:
+            messages.append(AIMessage(content=chat["content"]))
+            
+    messages.append(HumanMessage(content=request.user_message))
+    
+    # 지침 재강조 (대화가 길어져도 JSON 형식을 유지하도록 유도)
+    messages.append(SystemMessage(content="""
+    [MANDATORY RULE]
+    1. 반드시 아래 JSON 형식을 지키세요.
+    2. 'options' 필드는 절대로 비워두지 마세요. 사용자가 답변으로 선택할 수 있는 구체적인 문장 3개를 직접 만드세요.
+    3. JSON 외의 일반 텍스트는 응답에 포함하지 마세요.
+    """))
+    
+    response = llm.invoke(messages)
+    logger.info(f"[Interview Response Raw]: {response.content}")
+    
+    try:
+        content = response.content.strip()
+        # JSON 블록 추출 로직 강화
+        import re
+        json_match = re.search(r'\{.*\}', content, re.DOTALL)
+        if json_match:
+            content = json_match.group()
+        
+        parsed = json.loads(content)
+        # options 필드가 비어있을 경우 강제 생성 유도 (혹은 기본값)
+        if not parsed.get("options"):
+            parsed["options"] = ["더 자세히 설명해주세요.", "다음 단계로 넘어갈까요?", "다른 관점의 질문을 해주세요."]
+        return parsed
+    except Exception as e:
+        logger.error(f"Interview JSON parsing error: {e}, content: {response.content}")
+        return {
+            "ai_reply": response.content,
+            "options": ["예, 계속 진행해주세요.", "이해가 잘 안 됩니다.", "다른 대안을 제안해주세요."],
+            "ambiguity_score": 50,
+            "is_ready": False
+        }
 
 # ──────────────────────────────────────────────
 # Pipeline CRUD
@@ -151,7 +231,7 @@ async def update_step(
 )
 async def confirm_step(
     step_id: int,
-    data: app.schemas.pipeline.MeetingStepConfirmation,
+    data: MeetingStepConfirmation,
     db: AsyncSession = Depends(get_db),
 ):
     return await pipeline_service.confirm_pipeline_step_via_meeting(
@@ -378,9 +458,13 @@ async def generate_v3_pipeline(
     # PDF 바이트 읽기
     pdf_bytes: Optional[bytes] = None
     if file is not None:
+        logger.info(f"[generate_v3_pipeline] 파일 수신됨: {file.filename}, 컨텐츠 타입: {file.content_type}")
         if not file.filename.endswith(".pdf"):
             raise HTTPException(status_code=400, detail="PDF 파일만 업로드 가능합니다.")
         pdf_bytes = await file.read()
+        logger.info(f"[generate_v3_pipeline] PDF 데이터 읽기 완료: {len(pdf_bytes)} bytes")
+    else:
+        logger.warning("[generate_v3_pipeline] 수신된 파일이 없습니다.")
 
     category = category  # 내부 변수명 통일 (파라미터명과 동일)
 
@@ -394,7 +478,9 @@ async def generate_v3_pipeline(
             "feedback": "",
             "iteration_count": 0,
             "pdf_bytes": pdf_bytes,
-            "parsed_text": "",
+            "interview_summary": "",
+            "pdf_content": "",
+            "refined_requirements": "",
             "category": category or "BE",
             "final_pipeline": [],
         }, config={"recursion_limit": 1000})
@@ -417,4 +503,3 @@ async def generate_v3_pipeline(
         db, project_id, pipeline_items, category, tech_stack
     )
     return pipeline
-

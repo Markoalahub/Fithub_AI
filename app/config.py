@@ -7,7 +7,7 @@ class Settings(BaseSettings):
 
     # Database — 기본값: sqlite+aiosqlite (로컬 개발)
     # 프로덕션: postgresql+asyncpg://user:pass@host/dbname
-    database_url: str = "sqlite+aiosqlite:///./fitai.db"
+    database_url: str = "sqlite+aiosqlite:///./fitai_v2.db"
 
     # Debug mode
     debug: bool = False
